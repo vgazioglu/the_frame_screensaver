@@ -19,17 +19,9 @@ class ArtworkRepository {
 
   bool _initialized = false;
 
-  // 100% Verified Pure Landscape (Widescreen >= 1.25 Ratio) Bundled Masterpieces
+  // MSI 27" PRO MP275Q (2560x1440 WQHD 16:9 = 1.78) monitöre tam uyumlu
+  // Geniş Ekran (Widescreen >= 1.45..2.10) Dahili Yağlıboya Şaheserler
   static const List<Artwork> bundledMasterpieces = [
-    Artwork(
-      id: 'met-436535',
-      title: 'Wheat Field with Cypresses',
-      artist: 'Vincent van Gogh',
-      year: '1889',
-      medium: 'Oil on canvas',
-      museum: 'The Metropolitan Museum of Art, New York',
-      assetPath: 'assets/paintings/van_gogh_cypresses.jpg',
-    ),
     Artwork(
       id: 'met-436105',
       title: 'The Death of Socrates',
@@ -38,15 +30,6 @@ class ArtworkRepository {
       medium: 'Oil on canvas',
       museum: 'The Metropolitan Museum of Art, New York',
       assetPath: 'assets/paintings/david_socrates.jpg',
-    ),
-    Artwork(
-      id: 'met-436528',
-      title: 'Irises',
-      artist: 'Vincent van Gogh',
-      year: '1890',
-      medium: 'Oil on canvas',
-      museum: 'The Metropolitan Museum of Art, New York',
-      assetPath: 'assets/paintings/van_gogh_irises.jpg',
     ),
     Artwork(
       id: 'met-437658',
@@ -335,9 +318,10 @@ class ArtworkRepository {
           final w = (bytes[i + 7] << 8) | bytes[i + 8];
           if (h > 0) {
             final ratio = w / h;
-            // Strictly wall artwork landscape: between 1.18 and 2.25 ratio, and min 600px height
-            // Filters out extreme scrolls (e.g. Japanese emaki scrolls) and vertical paintings
-            return ratio >= 1.18 && ratio <= 2.25 && h >= 600;
+            // MSI 27" PRO MP275Q (2560x1440 WQHD 16:9 = 1.78) için sıkı geniş ekran filtresi:
+            // Yalnızca 1.45 (3:2) ile 2.10 arasındaki geniş yatay tablolar kabul edilir;
+            // kareye yakın (4:3, 5:4) veya dikey tablolar zorlanmaz ve gösterilmez.
+            return ratio >= 1.45 && ratio <= 2.10 && h >= 800;
           }
         }
       }
@@ -458,12 +442,12 @@ class ArtworkRepository {
   Future<Artwork?> _fetchFromClevelandMuseum(List<String> excludeIds) async {
     final random = Random();
 
-    // 866 adet CC0 yağlıboya tablo havuzunda en fazla 4 farklı sayfa dene
-    for (int attempt = 0; attempt < 4; attempt++) {
+    // 866 adet CC0 yağlıboya tablo havuzunda en fazla 6 farklı sayfa (35'erli) dene
+    for (int attempt = 0; attempt < 6; attempt++) {
       try {
-        final skip = random.nextInt(820);
+        final skip = random.nextInt(800);
         final url = Uri.parse(
-          'https://openaccess-api.clevelandart.org/api/artworks/?has_image=1&type=Painting&q=oil&cc0=1&skip=$skip&limit=25',
+          'https://openaccess-api.clevelandart.org/api/artworks/?has_image=1&type=Painting&q=oil&cc0=1&skip=$skip&limit=35',
         );
         final response = await http.get(
           url,
@@ -493,8 +477,9 @@ class ArtworkRepository {
           final h = double.tryParse(heightStr) ?? 0;
           if (h < 800) continue;
           final ratio = w / h;
-          // Yalnızca yatay (landscape) galeri tabloları (1.18 - 2.25 arası)
-          if (ratio < 1.18 || ratio > 2.25) continue;
+          // İndirmeden önce MSI 27" PRO MP275Q (16:9 = 1.78) oranına uyum kontrolü:
+          // Yalnızca 1.45 - 2.10 arasındaki geniş yatay (3:2, 16:10, 16:9) tablolar indirilir!
+          if (ratio < 1.45 || ratio > 2.10) continue;
 
           final technique = item['technique']?.toString() ?? '';
           final techLower = technique.toLowerCase();
