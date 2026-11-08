@@ -382,44 +382,32 @@ class ArtworkRepository {
         .trim();
   }
 
-  /// Dynamically fetches a random 4K Landscape painting online across Premier World Museums:
-  /// 1. Curated Masterpieces (MoMA, Uffizi, Rijksmuseum, National Gallery, Mauritshuis, Vienna, Tokyo, etc.)
-  /// 2. The Cleveland Museum of Art (3,900+ high-res public domain paintings)
-  /// 3. The Metropolitan Museum of Art (Open Access landscape collection)
+  /// Dynamically fetches a brand-new 4K Landscape Oil Painting online:
+  /// Prioritizes the 860+ CC0 Oil Painting pool at The Cleveland Museum of Art CDN,
+  /// plus any un-downloaded Curated World Museum masterpieces.
   Future<Artwork?> fetchRandomOnlineArtwork({List<String> excludeIds = const []}) async {
     await init();
 
-    final random = Random();
-    final choice = random.nextInt(100);
-
-    Artwork? art;
-    if (choice < 50) {
-      // 50% Curated World Museums
-      art = await _fetchFromCuratedWorldMuseums(excludeIds);
-      art ??= await _fetchFromClevelandMuseum(excludeIds);
-      art ??= await _fetchFromMetMuseum(excludeIds);
-    } else if (choice < 80) {
-      // 30% Cleveland Museum of Art Open Access
-      art = await _fetchFromClevelandMuseum(excludeIds);
-      art ??= await _fetchFromCuratedWorldMuseums(excludeIds);
-      art ??= await _fetchFromMetMuseum(excludeIds);
-    } else {
-      // 20% The Met Museum Open Access
-      art = await _fetchFromMetMuseum(excludeIds);
-      art ??= await _fetchFromClevelandMuseum(excludeIds);
-      art ??= await _fetchFromCuratedWorldMuseums(excludeIds);
-    }
+    // 1. Önce 866+ eserlik yüksek hızlı Cleveland Museum 4K CC0 Yağlıboya havuzundan yeni eser ara
+    Artwork? art = await _fetchFromClevelandMuseum(excludeIds);
+    // 2. Yedek olarak küratörlü dünya müzeleri havuzunu dene
+    art ??= await _fetchFromCuratedWorldMuseums(excludeIds);
+    art ??= await _fetchFromMetMuseum(excludeIds);
 
     return art;
   }
 
   Future<Artwork?> _fetchFromCuratedWorldMuseums(List<String> excludeIds) async {
     final random = Random();
-    final available = curatedMuseumPool
-        .where((item) =>
-            !excludeIds.contains(item['id']) &&
-            !excludeIds.contains(slugify('${item['artist']}_${item['title']}')))
-        .toList();
+    final available = curatedMuseumPool.where((item) {
+      final idStr = slugify('${item['artist']}_${item['title']}');
+      final targetPath = p.join(_paintingsDir.path, '$idStr.jpg');
+      final mediumLower = (item['medium'] ?? '').toLowerCase();
+      return mediumLower.contains('oil') &&
+          !excludeIds.contains(item['id']) &&
+          !excludeIds.contains(idStr) &&
+          !File(targetPath).existsSync();
+    }).toList();
     if (available.isEmpty) return null;
 
     final selected = available[random.nextInt(available.length)];
@@ -427,12 +415,6 @@ class ArtworkRepository {
     final artist = selected['artist']!;
     final idStr = slugify('${artist}_$title');
     final targetFilePath = p.join(_paintingsDir.path, '$idStr.jpg');
-
-    if (await File(targetFilePath).exists()) {
-      final existingCatalog = await loadAllArtworks();
-      final match = existingCatalog.where((a) => a.id == idStr).firstOrNull;
-      if (match != null) return match;
-    }
 
     try {
       final imgResponse = await http
@@ -474,109 +456,148 @@ class ArtworkRepository {
   }
 
   Future<Artwork?> _fetchFromClevelandMuseum(List<String> excludeIds) async {
-    try {
-      final random = Random();
-      final skip = random.nextInt(200);
-      final url = Uri.parse(
-          'https://openaccess-api.clevelandart.org/api/artworks/?has_image=1&type=Painting&skip=$skip&limit=15');
-      final response = await http.get(
-        url,
-        headers: {
-          'User-Agent':
-              'TheFrameScreensaver/1.0 (Linux; x86_64; contact: art-screensaver@local.org)',
-        },
-      ).timeout(const Duration(seconds: 8));
+    final random = Random();
 
-      if (response.statusCode != 200) return null;
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final items = data['data'] as List<dynamic>? ?? [];
-
-      for (final item in items) {
-        final images = item['images'] as Map<String, dynamic>?;
-        if (images == null) continue;
-
-        final web = images['web'] as Map<String, dynamic>?;
-        final print = images['print'] as Map<String, dynamic>?;
-        final imgObj = print ?? web;
-        if (imgObj == null) continue;
-
-        final widthStr = imgObj['width']?.toString() ?? '0';
-        final heightStr = imgObj['height']?.toString() ?? '0';
-        final w = double.tryParse(widthStr) ?? 0;
-        final h = double.tryParse(heightStr) ?? 0;
-        if (h < 600) continue;
-        final ratio = w / h;
-        // Strictly landscape wall art (between 1.18 and 2.25)
-        if (ratio < 1.18 || ratio > 2.25) continue;
-
-        final title = item['title']?.toString() ?? 'Masterpiece';
-        final titleLower = title.toLowerCase();
-        final typeLower = (item['type']?.toString() ?? '').toLowerCase();
-        // Skip scrolls, fans, fragments, album leaves that do not belong on a TV screen
-        if (titleLower.contains('scroll') ||
-            titleLower.contains('emaki') ||
-            titleLower.contains('fan') ||
-            titleLower.contains('album') ||
-            titleLower.contains('fragment') ||
-            typeLower.contains('scroll')) {
-          continue;
-        }
-
-        final imgUrl = imgObj['url']?.toString();
-        if (imgUrl == null || imgUrl.isEmpty) continue;
-
-        final creators = item['creators'] as List<dynamic>?;
-        String artist = 'Master Artist';
-        if (creators != null && creators.isNotEmpty) {
-          final desc = creators[0]['description']?.toString() ?? 'Master Artist';
-          final parenIdx = desc.indexOf('(');
-          artist = (parenIdx > 0 ? desc.substring(0, parenIdx) : desc).trim();
-        }
-
-        final slugId = slugify('${artist}_$title');
-        if (slugId.isEmpty || excludeIds.contains(slugId)) continue;
-
-        final targetFilePath = p.join(_paintingsDir.path, '$slugId.jpg');
-        if (await File(targetFilePath).exists()) {
-          final existingCatalog = await loadAllArtworks();
-          final match = existingCatalog.where((a) => a.id == slugId).firstOrNull;
-          if (match != null) return match;
-          continue;
-        }
-
-        final imgResponse = await http.get(
-          Uri.parse(imgUrl),
+    // 866 adet CC0 yağlıboya tablo havuzunda en fazla 4 farklı sayfa dene
+    for (int attempt = 0; attempt < 4; attempt++) {
+      try {
+        final skip = random.nextInt(820);
+        final url = Uri.parse(
+          'https://openaccess-api.clevelandart.org/api/artworks/?has_image=1&type=Painting&q=oil&cc0=1&skip=$skip&limit=25',
+        );
+        final response = await http.get(
+          url,
           headers: {
             'User-Agent':
                 'TheFrameScreensaver/1.0 (Linux; x86_64; contact: art-screensaver@local.org)',
           },
-        ).timeout(const Duration(seconds: 25));
+        ).timeout(const Duration(seconds: 10));
 
-        if (imgResponse.statusCode == 200 && imgResponse.bodyBytes.length > 50000) {
-          final file = File(targetFilePath);
-          await file.writeAsBytes(imgResponse.bodyBytes);
+        if (response.statusCode != 200) continue;
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final items = List<dynamic>.from(data['data'] as List<dynamic>? ?? []);
+        items.shuffle(random);
 
-          if (!isLandscapeJpeg(file)) {
-            await file.delete();
+        for (final item in items) {
+          final images = item['images'] as Map<String, dynamic>?;
+          if (images == null) continue;
+
+          final web = images['web'] as Map<String, dynamic>?;
+          final printImg = images['print'] as Map<String, dynamic>?;
+          final imgObj = printImg ?? web;
+          if (imgObj == null) continue;
+
+          final widthStr = imgObj['width']?.toString() ?? '0';
+          final heightStr = imgObj['height']?.toString() ?? '0';
+          final w = double.tryParse(widthStr) ?? 0;
+          final h = double.tryParse(heightStr) ?? 0;
+          if (h < 800) continue;
+          final ratio = w / h;
+          // Yalnızca yatay (landscape) galeri tabloları (1.18 - 2.25 arası)
+          if (ratio < 1.18 || ratio > 2.25) continue;
+
+          final technique = item['technique']?.toString() ?? '';
+          final techLower = technique.toLowerCase();
+          // Yalnızca gerçek yağlıboya (oil on canvas / panel / fabric / wood) eserleri kabul et
+          if (!techLower.contains('oil')) continue;
+          if (techLower.contains('clamshell') ||
+              techLower.contains('mural') ||
+              techLower.contains('fresco') ||
+              techLower.contains('silk') ||
+              techLower.contains('triptych') ||
+              techLower.contains('tabernacle')) {
             continue;
           }
 
-          final newArt = Artwork(
-            id: slugId,
-            title: title,
-            artist: artist,
-            year: item['creation_date']?.toString() ?? '',
-            medium: item['technique']?.toString() ?? 'Oil on canvas',
-            museum: 'The Cleveland Museum of Art',
-            localFilePath: targetFilePath,
-            remoteImageUrl: imgUrl,
-          );
+          final title = item['title']?.toString() ?? 'Masterpiece';
+          final titleLower = title.toLowerCase();
+          final typeLower = (item['type']?.toString() ?? '').toLowerCase();
+          if (titleLower.contains('scroll') ||
+              titleLower.contains('emaki') ||
+              titleLower.contains('fan') ||
+              titleLower.contains('album') ||
+              titleLower.contains('fragment') ||
+              titleLower.contains('mural') ||
+              titleLower.contains('cassone') ||
+              titleLower.contains('icon') ||
+              typeLower.contains('scroll')) {
+            continue;
+          }
 
-          await _saveArtworkToCatalog(newArt);
-          return newArt;
+          final imgUrl = imgObj['url']?.toString();
+          if (imgUrl == null || imgUrl.isEmpty) continue;
+
+          final creators = item['creators'] as List<dynamic>?;
+          String artist = '';
+          if (creators != null && creators.isNotEmpty) {
+            final desc = creators[0]['description']?.toString() ?? '';
+            final parenIdx = desc.indexOf('(');
+            artist = (parenIdx > 0 ? desc.substring(0, parenIdx) : desc).trim();
+          }
+          // Anonim / bilinmeyen ("Master Artist" vb.) eserleri atla, gerçek ressamları tercih et
+          if (artist.isEmpty ||
+              artist.toLowerCase() == 'master artist' ||
+              artist.toLowerCase().contains('unknown') ||
+              artist.toLowerCase().contains('anonymous')) {
+            continue;
+          }
+
+          final slugId = slugify('${artist}_$title');
+          if (slugId.isEmpty || excludeIds.contains(slugId)) continue;
+
+          final targetFilePath = p.join(_paintingsDir.path, '$slugId.jpg');
+          // Zaten indirilmişse atla ve gerçekten YENİ bir eser bul
+          if (await File(targetFilePath).exists()) {
+            continue;
+          }
+
+          final imgResponse = await http.get(
+            Uri.parse(imgUrl),
+            headers: {
+              'User-Agent':
+                  'TheFrameScreensaver/1.0 (Linux; x86_64; contact: art-screensaver@local.org)',
+            },
+          ).timeout(const Duration(seconds: 25));
+
+          if (imgResponse.statusCode == 200 &&
+              imgResponse.bodyBytes.length > 50000) {
+            final file = File(targetFilePath);
+            await file.writeAsBytes(imgResponse.bodyBytes);
+
+            if (!isLandscapeJpeg(file)) {
+              await file.delete();
+              continue;
+            }
+
+            // Portre / figüratif eser ise baş hizasını koruyacak focalY ata
+            double? autoFocalY;
+            if (titleLower.contains('portrait') ||
+                titleLower.contains('madame') ||
+                titleLower.contains('monsieur') ||
+                titleLower.contains('lady') ||
+                titleLower.contains('woman') ||
+                titleLower.contains('family')) {
+              autoFocalY = -0.60;
+            }
+
+            final newArt = Artwork(
+              id: slugId,
+              title: title,
+              artist: artist,
+              year: item['creation_date']?.toString() ?? '',
+              medium: technique,
+              museum: 'The Cleveland Museum of Art',
+              localFilePath: targetFilePath,
+              remoteImageUrl: imgUrl,
+              focalY: autoFocalY,
+            );
+
+            await _saveArtworkToCatalog(newArt);
+            return newArt;
+          }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
     return null;
   }
 

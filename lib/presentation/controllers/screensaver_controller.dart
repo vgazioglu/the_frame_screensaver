@@ -174,7 +174,7 @@ class ScreensaverController extends ChangeNotifier {
     if (_isFetchingOnline) return;
 
     _isFetchingOnline = true;
-    _statusMessage = '🏛️ Yeni 4K şaheser indiriliyor...';
+    _statusMessage = '🏛️ Yeni 4K yağlıboya şaheser indiriliyor...';
     notifyListeners();
 
     try {
@@ -191,14 +191,14 @@ class ScreensaverController extends ChangeNotifier {
           _currentIndex = idx;
         }
         _seenInSession.add(newArt.id);
-        _statusMessage = '✅ ${newArt.title} yüklendi';
+        _statusMessage = '✅ Yeni Eser İndirildi: ${newArt.title} (${newArt.artist})';
       } else {
         nextArtwork();
-        _statusMessage = null;
+        _statusMessage = '⚠️ Sunucu yanıt vermedi, arşivden gösteriliyor';
       }
     } catch (_) {
       nextArtwork();
-      _statusMessage = null;
+      _statusMessage = '⚠️ İndirme hatası, arşivden gösteriliyor';
     } finally {
       _isFetchingOnline = false;
       notifyListeners();
