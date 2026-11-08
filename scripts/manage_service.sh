@@ -69,7 +69,7 @@ EOF
   echo "=========================================================="
   echo "✅ The Frame Ekran Koruyucu Servisi Başarıyla Kuruldu!"
   echo "=========================================================="
-  echo "• Bilgisayarınız 5 dakika (300 sn) inaktif kalınca otomatik devreye girecektir."
+  echo "• Bilgisayarınız 3 dakika (180 sn) inaktif kalınca otomatik devreye girecektir."
   echo "• Biri fareyi oynatır veya [Esc] tuşuna basarsa ekran koruyucu kapanır"
   echo "  ve hemen Cinnamon gerçek kilit ekranı devreye girer."
   echo "• Durumu kontrol etmek için: $0 status"

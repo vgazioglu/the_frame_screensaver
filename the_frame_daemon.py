@@ -76,8 +76,8 @@ def main():
     parser.add_argument(
         "--timeout",
         type=int,
-        default=int(os.environ.get("IDLE_TIMEOUT_SECONDS", 300)),
-        help="Boşta kalma süresi (saniye). Varsayılan: 300 sn (5 dk)"
+        default=int(os.environ.get("IDLE_TIMEOUT_SECONDS", 180)),
+        help="Boşta kalma süresi (saniye). Varsayılan: 180 sn (3 dk)"
     )
     parser.add_argument(
         "--dim-brightness",

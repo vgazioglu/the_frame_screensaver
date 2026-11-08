@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 The Frame Screensaver - Linux X11 Idle Watcher Daemon
-Monitors user inactivity (5 minutes / 300s) on Linux (X11 / Cinnamon).
+Monitors user inactivity (3 minutes / 180s) on Linux (X11 / Cinnamon).
 When idle, launches the Samsung The Frame art screensaver.
 When user presses ESC or interacts with keyboard/mouse, exits and locks the screen.
 """
@@ -14,7 +14,7 @@ import sys
 import time
 
 # Configuration
-IDLE_THRESHOLD_SECONDS = 300  # 5 minutes
+IDLE_THRESHOLD_SECONDS = int(os.environ.get("IDLE_TIMEOUT_SECONDS", 180))  # 3 minutes default (180s)
 CHECK_INTERVAL_SECONDS = 5
 BINARY_PATH = os.path.expanduser("~/Projects/the_frame_screensaver/build/linux/x64/release/bundle/the_frame_screensaver")
 
@@ -108,7 +108,7 @@ def main():
                 sys.stdout.flush()
                 last_log_time = now
 
-            # 5 dakika (300 saniye) inaktiflik tamamlandığında:
+            # 3 dakika (180 saniye) inaktiflik tamamlandığında:
             if idle_sec >= IDLE_THRESHOLD_SECONDS:
                 if not is_cinnamon_screensaver_active() and not is_screensaver_binary_running():
                     print(f"[*] İnaktiflik eşiği aşıldı ({idle_sec:.0f}s >= {IDLE_THRESHOLD_SECONDS}s). The Frame Ekran Koruyucu başlatılıyor...")

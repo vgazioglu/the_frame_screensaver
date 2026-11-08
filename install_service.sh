@@ -28,7 +28,7 @@ After=graphical-session.target
 [Service]
 Type=simple
 Environment=DISPLAY=:0
-Environment=IDLE_TIMEOUT_SECONDS=300
+Environment=IDLE_TIMEOUT_SECONDS=180
 Environment=MATTE_BRIGHTNESS=0.65
 ExecStart=/usr/bin/python3 ${DAEMON_PATH}
 Restart=always
