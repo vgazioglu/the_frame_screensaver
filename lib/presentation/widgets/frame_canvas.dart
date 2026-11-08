@@ -82,16 +82,24 @@ class _FrameCanvasState extends State<FrameCanvas> {
   }
 
   Alignment _calculateFocalAlignment() {
-    // Dikey (portrait) tablolar: Yüzler ve can alıcı figürler üst üçlüktedir (örn: Oedipus ve Sfenks)
-    if (_imageAspect < 0.95) {
-      return const Alignment(0.0, -0.38);
+    // 16:9 (1.77) ekranda, en-boy oranı 1.77'den küçük tüm tablolarda dikey kırpma (vertical crop) gerçekleşir.
+    // Figüratif ve portre tablolarda insanların kafaları, saçları ve yüzleri tuvalin üst 1/3'lük dilimindedir.
+    // İnsanların kafalarının üst kısımlarının kesilmesini KESİNLİKLE önlemek için kırpma tavan çizgisine kilitlenir:
+    if (_imageAspect < 1.0) {
+      // Tam dikey (portrait) eserler: Kafalar ve şapkalar için tepe payı sıfır kayıpla korunur
+      return const Alignment(0.0, -0.95);
     }
-    // Kare veya standart 4:3 / 3:2 tablolar (örn: Sokrates'in Ölümü, İrisler)
-    if (_imageAspect < 1.45) {
-      return const Alignment(0.0, -0.22);
+    if (_imageAspect < 1.35) {
+      // 5:4 ve 4:3 eserler (Renoir Madam Charpentier, Sokrates, vb.):
+      // Üstten kesmeyi sıfıra indirir, sadece alt taban (zemin/etek) payından kırpar
+      return const Alignment(0.0, -0.92);
     }
-    // Geniş 16:9 / 16:10 panoramik manzara tabloları (örn: Selvili Buğday Tarlası, Yıldızlı Gece)
-    return const Alignment(0.0, -0.12);
+    if (_imageAspect < 1.60) {
+      // 3:2 klasik oranlar: Güvenli tavan payı (headroom safety)
+      return const Alignment(0.0, -0.80);
+    }
+    // Geniş 16:9 / 16:10 panoramik manzara tabloları
+    return const Alignment(0.0, -0.15);
   }
 
   static List<double> _calculateArtModeColorMatrix(double factor) {
@@ -125,13 +133,15 @@ class _FrameCanvasState extends State<FrameCanvas> {
         // - errorBuilder sayesinde asla siyah ekran oluşmaz.
         if (widget.settings.fitMode.isSamsungMode) {
           final focalAlignment = _calculateFocalAlignment();
+          // Oranı 16:9'dan dar olan tablolarda dikey overscan yapmayarak tavan payını azami koruyoruz
+          final overscanScale = _imageAspect < 1.65 ? 1.0 : 1.02;
 
           return Stack(
             fit: StackFit.expand,
             children: [
               // Tablonun Kendisi (Uçtan uca, en-boy oranı korunarak yayılan saf tablo)
               Transform.scale(
-                scale: 1.04, // Samsung The Frame Art Mode standart %4 overscan (kenar çizgilerini eler)
+                scale: overscanScale,
                 child: ColorFiltered(
                   colorFilter: widget.settings.enableAmbientDimming
                       ? ColorFilter.matrix(
