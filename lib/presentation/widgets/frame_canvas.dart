@@ -82,24 +82,23 @@ class _FrameCanvasState extends State<FrameCanvas> {
   }
 
   Alignment _calculateFocalAlignment() {
-    // 16:9 (1.77) ekranda, en-boy oranı 1.77'den küçük tüm tablolarda dikey kırpma (vertical crop) gerçekleşir.
-    // Figüratif ve portre tablolarda insanların kafaları, saçları ve yüzleri tuvalin üst 1/3'lük dilimindedir.
-    // İnsanların kafalarının üst kısımlarının kesilmesini KESİNLİKLE önlemek için kırpma tavan çizgisine kilitlenir:
-    if (_imageAspect < 1.0) {
-      // Tam dikey (portrait) eserler: Kafalar ve şapkalar için tepe payı sıfır kayıpla korunur
-      return const Alignment(0.0, -0.95);
+    // 1. Eser bazlı özel odak noktası tanımlanmışsa (metadata focalY) onu kullanır
+    if (widget.artwork.focalY != null) {
+      return Alignment(0.0, widget.artwork.focalY!.clamp(-1.0, 1.0));
     }
-    if (_imageAspect < 1.35) {
-      // 5:4 ve 4:3 eserler (Renoir Madam Charpentier, Sokrates, vb.):
-      // Üstten kesmeyi sıfıra indirir, sadece alt taban (zemin/etek) payından kırpar
-      return const Alignment(0.0, -0.92);
+
+    // 2. Varsayılan Akıllı Kompozisyon Odaklaması:
+    // Aşırı uçlara (-0.95 gibi) gitmeden, insan gözünün ve altın oranın doğal odağını korur
+    if (_imageAspect < 0.95) {
+      // Dikey (portrait) eserler
+      return const Alignment(0.0, -0.40);
     }
-    if (_imageAspect < 1.60) {
-      // 3:2 klasik oranlar: Güvenli tavan payı (headroom safety)
-      return const Alignment(0.0, -0.80);
+    if (_imageAspect < 1.45) {
+      // 5:4 ve 4:3 klasik oranlar (Sokrates, İrisler vb.)
+      return const Alignment(0.0, -0.22);
     }
     // Geniş 16:9 / 16:10 panoramik manzara tabloları
-    return const Alignment(0.0, -0.15);
+    return const Alignment(0.0, -0.12);
   }
 
   static List<double> _calculateArtModeColorMatrix(double factor) {

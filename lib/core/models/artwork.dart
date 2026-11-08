@@ -8,6 +8,7 @@ class Artwork {
   final String? assetPath;
   final String? localFilePath;
   final String? remoteImageUrl;
+  final double? focalY; // -1.0 (en üst) ile +1.0 (en alt) arası özel odak noktası
 
   const Artwork({
     required this.id,
@@ -19,6 +20,7 @@ class Artwork {
     this.assetPath,
     this.localFilePath,
     this.remoteImageUrl,
+    this.focalY,
   });
 
   bool get hasLocalFile => localFilePath != null;
@@ -34,6 +36,7 @@ class Artwork {
         if (assetPath != null) 'assetPath': assetPath,
         if (localFilePath != null) 'localFilePath': localFilePath,
         if (remoteImageUrl != null) 'remoteImageUrl': remoteImageUrl,
+        if (focalY != null) 'focalY': focalY,
       };
 
   factory Artwork.fromJson(Map<String, dynamic> json) => Artwork(
@@ -46,5 +49,6 @@ class Artwork {
         assetPath: json['assetPath'] as String?,
         localFilePath: json['localFilePath'] as String?,
         remoteImageUrl: json['remoteImageUrl'] as String?,
+        focalY: (json['focalY'] as num?)?.toDouble(),
       );
 }
