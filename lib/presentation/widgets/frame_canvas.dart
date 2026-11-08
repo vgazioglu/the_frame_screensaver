@@ -102,17 +102,22 @@ class _FrameCanvasState extends State<FrameCanvas> {
   }
 
   static List<double> _calculateArtModeColorMatrix(double factor) {
-    // Samsung The Frame "Art Mode" Optik Simülasyonu:
-    // 1. Arka Işık Kısma: Monitörün sert LED ışığını (~%15) kısarak gerçek tuvalin ortam ışığını yansıtma hissini verir.
-    // 2. Sıcak Tuval Spektrumu: Soğuk mavi dijital LED piklerini kırar (-%6 mavi), sıcak keten/yağlıboya tonu ekler (+%2 kırmızı).
-    // 3. Pigment Derinliği: Dijital zifiri siyahı (#000000) fiziksel boya pigmenti gibi hafifçe yumuşatır (+3.0 ofset).
-    final r = factor * 1.02;
-    final g = factor * 1.00;
-    final b = factor * 0.94;
+    // 2K Monitör İçin "Old Master Dammar Varnish & Pigment" Optik Kalibrasyonu:
+    // 1. Akşam/Gece saatlerinde (18:00-07:00) 2800K galeri halojen sıcaklığını hafifçe artırır.
+    // 2. Dijital LED beyaz parlamasını (Lead-White Roll-off) yumuşatır, mavi LED piklerini kırar.
+    // 3. Dijital sıfır siyahı (#000000), gerçek yağlıboya "Fildişi Siyahı / Yanık Umber"
+    //    pigment derinliğine (+4.5R, +3.5G, +1.8B) taşır.
+    final hour = DateTime.now().hour;
+    final isNight = hour >= 18 || hour < 7;
+    final effectiveFactor = isNight ? (factor * 0.94).clamp(0.45, 1.0) : factor;
+
+    final r = effectiveFactor * (isNight ? 1.035 : 1.02);
+    final g = effectiveFactor * 0.995;
+    final b = effectiveFactor * (isNight ? 0.90 : 0.93);
     return [
-      r, 0, 0, 0, 3.0,
-      0, g, 0, 0, 3.0,
-      0, 0, b, 0, 1.0,
+      r, 0, 0, 0, 4.5,
+      0, g, 0, 0, 3.5,
+      0, 0, b, 0, 1.8,
       0, 0, 0, 1.0, 0,
     ];
   }
@@ -187,6 +192,33 @@ class _FrameCanvasState extends State<FrameCanvas> {
                 const Positioned.fill(
                   child: AmbientLightingOverlay(),
                 ),
+
+              // Dış Ahşap/Siyah Çerçeve (varsa)
+              if (widget.settings.bezelStyle != FrameBezelStyle.none)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      painter: FramePainter(
+                        style: widget.settings.bezelStyle,
+                        thickness: 24.0,
+                      ),
+                    ),
+                  ),
+                ),
+
+              // Antik Pirinç Müze Künyesi (varsa)
+              if (widget.settings.showMuseumPlaque)
+                Positioned(
+                  bottom: 24.0,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: MuseumPlaque(
+                      artwork: widget.artwork,
+                      visible: true,
+                    ),
+                  ),
+                ),
             ],
           );
         }
@@ -222,7 +254,7 @@ class _FrameCanvasState extends State<FrameCanvas> {
                 ),
               ),
 
-              // Eserin Kendisi (Hiçbir yer kesilmeden, ortalanmış ve gölgeli)
+              // Eserin Kendisi (Hiçbir yer kesilmeden, 45° pahlı kesim paspartu içinde ortalanmış)
               Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -230,7 +262,16 @@ class _FrameCanvasState extends State<FrameCanvas> {
                     vertical: 42.0,
                   ),
                   child: Container(
+                    padding: const EdgeInsets.all(3.5),
                     decoration: BoxDecoration(
+                      // 45° kesimli pamuklu paspartu iç kesit rengi (fildişi karton çekirdeği)
+                      color: const Color(0xFFFDF9EE),
+                      border: const Border(
+                        top: BorderSide(color: Color(0xFFD2C7B4), width: 1.5),
+                        left: BorderSide(color: Color(0xFFDAD0BE), width: 1.5),
+                        right: BorderSide(color: Color(0xFFFFFDF8), width: 1.5),
+                        bottom: BorderSide(color: Color(0xFFFFFFFF), width: 2.0),
+                      ),
                       boxShadow: [
                         // 45 derece pahlı iç paspartu gölgesi (The Frame 3D Derinlik)
                         BoxShadow(
