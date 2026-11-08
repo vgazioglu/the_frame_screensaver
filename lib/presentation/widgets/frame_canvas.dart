@@ -90,12 +90,12 @@ class _FrameCanvasState extends State<FrameCanvas> {
     // 2. Varsayılan Akıllı Kompozisyon Odaklaması:
     // Aşırı uçlara (-0.95 gibi) gitmeden, insan gözünün ve altın oranın doğal odağını korur
     if (_imageAspect < 0.95) {
-      // Dikey (portrait) eserler
-      return const Alignment(0.0, -0.40);
+      // Dikey (portrait) eserler: Tavan ve baş payı güvenliği
+      return const Alignment(0.0, -0.60);
     }
     if (_imageAspect < 1.45) {
-      // 5:4 ve 4:3 klasik oranlar (Sokrates, İrisler vb.)
-      return const Alignment(0.0, -0.22);
+      // 5:4 ve 4:3 klasik oranlar (Portreler ve figüratif tablolar için güvenli tavan payı)
+      return const Alignment(0.0, -0.45);
     }
     // Geniş 16:9 / 16:10 panoramik manzara tabloları
     return const Alignment(0.0, -0.12);
