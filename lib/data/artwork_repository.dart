@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import '../core/models/artwork.dart';
 import '../core/models/frame_settings.dart';
@@ -329,11 +330,155 @@ class ArtworkRepository {
     return true;
   }
 
+  /// Kenarlık ve Çerçeve Analizi:
+  /// Tablo fotoğrafının etrafında sonradan çekilmiş müze çerçevesi (ahşap/yaldız)
+  /// veya bitmemiş taslakların etrafındaki aşırı beyaz/çiğ tuval kenarlıklarını tespit eder.
+  static bool hasFrameOrExcessiveBorders(File file) {
+    try {
+      if (!file.existsSync()) return false;
+      final bytes = file.readAsBytesSync();
+      final image = img.decodeJpg(bytes);
+      if (image == null) return false;
+
+      final w = image.width;
+      final h = image.height;
+      final bH = (h * 0.03).round().clamp(2, 50);
+      final bW = (w * 0.03).round().clamp(2, 50);
+
+      // Üst kenar örneklemesi
+      double topSum = 0;
+      int topCount = 0;
+      for (int y = 0; y < bH; y += 2) {
+        for (int x = 0; x < w; x += 4) {
+          final p = image.getPixel(x, y);
+          topSum += (p.r + p.g + p.b) / 3.0;
+          topCount++;
+        }
+      }
+      final topMean = topCount > 0 ? topSum / topCount : 0.0;
+
+      // Alt kenar örneklemesi
+      double botSum = 0;
+      int botCount = 0;
+      for (int y = h - bH; y < h; y += 2) {
+        for (int x = 0; x < w; x += 4) {
+          final p = image.getPixel(x, y);
+          botSum += (p.r + p.g + p.b) / 3.0;
+          botCount++;
+        }
+      }
+      final botMean = botCount > 0 ? botSum / botCount : 0.0;
+
+      // Sol kenar örneklemesi
+      double leftSum = 0;
+      int leftCount = 0;
+      for (int y = 0; y < h; y += 4) {
+        for (int x = 0; x < bW; x += 2) {
+          final p = image.getPixel(x, y);
+          leftSum += (p.r + p.g + p.b) / 3.0;
+          leftCount++;
+        }
+      }
+      final leftMean = leftCount > 0 ? leftSum / leftCount : 0.0;
+
+      // Sağ kenar örneklemesi
+      double rightSum = 0;
+      int rightCount = 0;
+      for (int y = 0; y < h; y += 4) {
+        for (int x = w - bW; x < w; x += 2) {
+          final p = image.getPixel(x, y);
+          rightSum += (p.r + p.g + p.b) / 3.0;
+          rightCount++;
+        }
+      }
+      final rightMean = rightCount > 0 ? rightSum / rightCount : 0.0;
+
+      // İç bölge (resmin gövdesi, %25-%75)
+      double innerSum = 0;
+      int innerCount = 0;
+      for (int y = (h * 0.25).round(); y < (h * 0.75).round(); y += 8) {
+        for (int x = (w * 0.25).round(); x < (w * 0.75).round(); x += 8) {
+          final p = image.getPixel(x, y);
+          innerSum += (p.r + p.g + p.b) / 3.0;
+          innerCount++;
+        }
+      }
+      final innerMean = innerCount > 0 ? innerSum / innerCount : 0.0;
+
+      // Kural 1: Dış Çerçeveli Fotoğraf (Kenarların hepsi iç resimden bariz parlak/açık renk çerçeve)
+      final minBorder = [topMean, botMean, leftMean, rightMean].reduce((a, b) => a < b ? a : b);
+      if (minBorder > 170 && innerMean < 130) {
+        return true;
+      }
+
+      // Kural 2: Aşırı Beyaz/Çiğ Kenarlık (Üst ve alt > 195 veya 2'den fazla kenar > 195)
+      int brightBorders = 0;
+      if (topMean > 195) brightBorders++;
+      if (botMean > 195) brightBorders++;
+      if (leftMean > 195) brightBorders++;
+      if (rightMean > 195) brightBorders++;
+
+      if (brightBorders >= 2 && (topMean > 200 || botMean > 200)) {
+        return true;
+      }
+
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Ekran koruyucunun huzurlu, estetik atmosferini bozan aşırı şiddet,
+  /// dehşet, ceset, şehit edilme veya kafa kesme temalı eserleri filtreler.
+  static bool isViolentOrInappropriate(String title, [String? description]) {
+    const forbidden = [
+      'perseus',
+      'medusa',
+      'slaughter',
+      'massacre',
+      'execution',
+      'behead',
+      'decapitat',
+      'severed',
+      'torture',
+      'martyr',
+      'corpse',
+      'cadaver',
+      'murder',
+      'slaying',
+      'assassin',
+      'mutilat',
+      'crucifix',
+      'horror',
+      'cannibal',
+      'guillotine',
+      'gallows',
+      'hanging',
+      'skeleton',
+      'carcass',
+      'nightmarish',
+    ];
+    final t = title.toLowerCase();
+    final d = (description ?? '').toLowerCase();
+    for (final kw in forbidden) {
+      if (t.contains(kw) || d.contains(kw)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Loads all artworks: strictly landscape (aspect ratio >= 1.15) with valid files (> 50KB)
   Future<List<Artwork>> loadAllArtworks() async {
     await init();
 
     final artworks = <Artwork>[...bundledMasterpieces];
+    final seenUrls = <String>{};
+    final seenKeys = <String>{};
+
+    for (final b in bundledMasterpieces) {
+      seenKeys.add('${slugify(b.artist)}_${slugify(b.title)}');
+    }
 
     if (await _catalogFile.exists()) {
       try {
@@ -343,11 +488,28 @@ class ArtworkRepository {
           final art = Artwork.fromJson(item as Map<String, dynamic>);
           if (art.localFilePath != null) {
             final f = File(art.localFilePath!);
+            final key = '${slugify(art.artist)}_${slugify(art.title)}';
+            final url = art.remoteImageUrl;
+
+            // Yinelenen (Duplicate) koruması
+            if (seenKeys.contains(key) ||
+                (url != null && seenUrls.contains(url)) ||
+                artworks.any((a) => a.id == art.id)) {
+              continue;
+            }
+
+            // Şiddet / dehşet filtresi
+            if (isViolentOrInappropriate(art.title)) {
+              continue;
+            }
+
             if (await f.exists() &&
                 await f.length() > 50000 &&
                 isLandscapeJpeg(f) &&
-                !artworks.any((a) => a.id == art.id)) {
+                !hasFrameOrExcessiveBorders(f)) {
               artworks.add(art);
+              seenKeys.add(key);
+              if (url != null) seenUrls.add(url);
             }
           }
         }
@@ -357,12 +519,32 @@ class ArtworkRepository {
     return artworks;
   }
 
+  /// Diakritik (aksanlı) harfleri temiz ASCII karşılıklarına dönüştürerek
+  /// dosya adı çakışmalarını ve harf düşmesi kaynaklı mükerrer kayıtları önler.
   static String slugify(String text) {
-    return text
-        .toLowerCase()
+    const diacriticsMap = {
+      'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a', 'æ': 'ae',
+      'ç': 'c',
+      'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e',
+      'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i',
+      'ñ': 'n',
+      'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o', 'ø': 'o', 'œ': 'oe',
+      'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u',
+      'ý': 'y', 'ÿ': 'y',
+      'ß': 'ss',
+      'ğ': 'g', 'ı': 'i', 'ş': 's',
+    };
+
+    var result = text.toLowerCase();
+    diacriticsMap.forEach((key, value) {
+      result = result.replaceAll(key, value);
+    });
+
+    return result
         .replaceAll(RegExp(r'[^\w\s-]'), '')
         .replaceAll(RegExp(r'[\s-]+'), '_')
         .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '')
         .trim();
   }
 
@@ -384,7 +566,10 @@ class ArtworkRepository {
   Future<Artwork?> _fetchFromCuratedWorldMuseums(List<String> excludeIds) async {
     final random = Random();
     final available = curatedMuseumPool.where((item) {
-      final idStr = slugify('${item['artist']}_${item['title']}');
+      final title = item['title'] ?? '';
+      if (isViolentOrInappropriate(title)) return false;
+
+      final idStr = slugify('${item['artist']}_$title');
       final targetPath = p.join(_paintingsDir.path, '$idStr.jpg');
       final mediumLower = (item['medium'] ?? '').toLowerCase();
       return mediumLower.contains('oil') &&
@@ -416,7 +601,7 @@ class ArtworkRepository {
         final file = File(targetFilePath);
         await file.writeAsBytes(imgResponse.bodyBytes);
 
-        if (!isLandscapeJpeg(file)) {
+        if (!isLandscapeJpeg(file) || hasFrameOrExcessiveBorders(file)) {
           await file.delete();
           return null;
         }
@@ -496,8 +681,20 @@ class ArtworkRepository {
 
           final title = item['title']?.toString() ?? 'Masterpiece';
           final titleLower = title.toLowerCase();
+          final desc = item['description']?.toString() ?? '';
           final typeLower = (item['type']?.toString() ?? '').toLowerCase();
-          if (titleLower.contains('scroll') ||
+
+          // 1. Şiddet ve dehşet temalarını ele
+          if (isViolentOrInappropriate(title, desc)) {
+            continue;
+          }
+
+          // 2. Çerçeveli gelen, taslak (sketch/study) veya çerçeve kalıntıları içeren eserleri ele
+          if (titleLower.contains('sketch') ||
+              titleLower.contains('draft') ||
+              titleLower.contains('drawing') ||
+              titleLower.contains('frame') ||
+              titleLower.contains('scroll') ||
               titleLower.contains('emaki') ||
               titleLower.contains('fan') ||
               titleLower.contains('album') ||
@@ -505,6 +702,7 @@ class ArtworkRepository {
               titleLower.contains('mural') ||
               titleLower.contains('cassone') ||
               titleLower.contains('icon') ||
+              techLower.contains('frame') ||
               typeLower.contains('scroll')) {
             continue;
           }
@@ -515,9 +713,9 @@ class ArtworkRepository {
           final creators = item['creators'] as List<dynamic>?;
           String artist = '';
           if (creators != null && creators.isNotEmpty) {
-            final desc = creators[0]['description']?.toString() ?? '';
-            final parenIdx = desc.indexOf('(');
-            artist = (parenIdx > 0 ? desc.substring(0, parenIdx) : desc).trim();
+            final descArtist = creators[0]['description']?.toString() ?? '';
+            final parenIdx = descArtist.indexOf('(');
+            artist = (parenIdx > 0 ? descArtist.substring(0, parenIdx) : descArtist).trim();
           }
           // Anonim / bilinmeyen ("Master Artist" vb.) eserleri atla, gerçek ressamları tercih et
           if (artist.isEmpty ||
@@ -549,7 +747,8 @@ class ArtworkRepository {
             final file = File(targetFilePath);
             await file.writeAsBytes(imgResponse.bodyBytes);
 
-            if (!isLandscapeJpeg(file)) {
+            // Geniş ekran ve çerçevesiz/temiz kenar kontrolü
+            if (!isLandscapeJpeg(file) || hasFrameOrExcessiveBorders(file)) {
               await file.delete();
               continue;
             }
@@ -603,6 +802,8 @@ class ArtworkRepository {
         final primaryImage = data['primaryImage'] as String?;
         if (primaryImage != null && primaryImage.isNotEmpty) {
           final title = data['title'] as String? ?? 'Untitled';
+          if (isViolentOrInappropriate(title)) return null;
+
           final artist = data['artistDisplayName'] as String? ?? 'Master Artist';
           final slugId = slugify('${artist}_$title');
           final idStr = slugId.isNotEmpty ? slugId : 'artwork_$objectId';
@@ -624,7 +825,7 @@ class ArtworkRepository {
             final file = File(targetFilePath);
             await file.writeAsBytes(imgResponse.bodyBytes);
 
-            if (!isLandscapeJpeg(file)) {
+            if (!isLandscapeJpeg(file) || hasFrameOrExcessiveBorders(file)) {
               await file.delete();
               return null;
             }
@@ -651,7 +852,15 @@ class ArtworkRepository {
 
   Future<void> _saveArtworkToCatalog(Artwork art) async {
     final all = await loadAllArtworks();
-    if (!all.any((a) => a.id == art.id)) {
+    final normArtistTitle = '${slugify(art.artist)}_${slugify(art.title)}';
+    final alreadyExists = all.any((a) {
+      if (a.id == art.id) return true;
+      if (art.remoteImageUrl != null && a.remoteImageUrl == art.remoteImageUrl) return true;
+      final existingNorm = '${slugify(a.artist)}_${slugify(a.title)}';
+      return existingNorm == normArtistTitle;
+    });
+
+    if (!alreadyExists) {
       all.add(art);
       final catalogJson = jsonEncode(
         all.where((a) => a.localFilePath != null).map((a) => a.toJson()).toList(),

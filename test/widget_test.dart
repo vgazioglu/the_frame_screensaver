@@ -43,8 +43,8 @@ void main() {
 
     const settings = FrameSettings(
       fitMode: ArtworkFitMode.samsungNoMat,
-      showMuseumPlaque: true,
-      bezelStyle: FrameBezelStyle.oak,
+      showMuseumPlaque: false,
+      bezelStyle: FrameBezelStyle.none,
     );
 
     await tester.pumpWidget(
@@ -84,7 +84,7 @@ void main() {
     }
   });
 
-  test('ArtworkRepository.slugify generates clean human-readable filenames without met prefix', () {
+  test('ArtworkRepository.slugify generates clean human-readable filenames and transliterates diacritics', () {
     final slug1 = ArtworkRepository.slugify('Vincent van Gogh - Wheat Field');
     expect(slug1, 'vincent_van_gogh_wheat_field');
     expect(slug1.startsWith('met'), isFalse);
@@ -92,6 +92,24 @@ void main() {
     final slug2 = ArtworkRepository.slugify('Claude Monet - Cliff Walk at Pourville');
     expect(slug2, 'claude_monet_cliff_walk_at_pourville');
     expect(slug2.startsWith('met'), isFalse);
+
+    // Diakritik harf testi (harf düşmesi engellenmeli)
+    final slug3 = ArtworkRepository.slugify('Édouard Vuillard - Café Wepler');
+    expect(slug3, 'edouard_vuillard_cafe_wepler');
+
+    final slug4 = ArtworkRepository.slugify('Georges Seurat - Study for "Bathers at Asnières"');
+    expect(slug4, 'georges_seurat_study_for_bathers_at_asnieres');
+
+    final slug5 = ArtworkRepository.slugify('Juan van der Hamen y Léon - Still Life with Sweets');
+    expect(slug5, 'juan_van_der_hamen_y_leon_still_life_with_sweets');
+  });
+
+  test('ArtworkRepository.isViolentOrInappropriate filters gruesome and violent themes', () {
+    expect(ArtworkRepository.isViolentOrInappropriate("Perseus's Last Duty"), isTrue);
+    expect(ArtworkRepository.isViolentOrInappropriate("The Raft of the Medusa"), isTrue);
+    expect(ArtworkRepository.isViolentOrInappropriate("The Christian Martyr's Last Prayer"), isTrue);
+    expect(ArtworkRepository.isViolentOrInappropriate("The Starry Night"), isFalse);
+    expect(ArtworkRepository.isViolentOrInappropriate("Among the Sierra Nevada, California"), isFalse);
   });
 
   test('FrameSettings serializes and deserializes backlight dimming and cycle minutes accurately', () {
