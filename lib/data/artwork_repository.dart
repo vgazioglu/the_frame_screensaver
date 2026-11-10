@@ -447,6 +447,8 @@ class ArtworkRepository {
       'murder',
       'slaying',
       'assassin',
+      'abduction',
+      'rape',
       'mutilat',
       'crucifix',
       'horror',
