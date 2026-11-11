@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
 The Frame Screensaver - Linux X11 Idle Watcher Daemon
-Monitors user inactivity (3 minutes / 180s) on Linux (X11 / Cinnamon).
+Monitors user inactivity (3 minutes / 180s default) on Linux (X11 / Cinnamon).
 When idle, launches the Samsung The Frame art screensaver.
 When user presses ESC or interacts with keyboard/mouse, exits and locks the screen.
+Smart Cinnamon Lock Integration:
+  - If Cinnamon screensaver/lock activates while The Frame is running, The Frame terminates
+    immediately so it does not stay hidden beneath the lock screen.
+  - After unlocking Cinnamon, a grace period prevents The Frame from immediately re-triggering.
 """
 
 import ctypes
@@ -77,12 +81,18 @@ def is_screensaver_binary_running() -> bool:
         return False
 
 
+def kill_existing_screensavers():
+    try:
+        subprocess.run(["pkill", "-TERM", "-f", "the_frame_screensaver"], stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 def main():
     if not os.path.isfile(BINARY_PATH) or not os.access(BINARY_PATH, os.X_OK):
         sys.stderr.write(f"[-] Error: Screensaver binary not found: {BINARY_PATH}\n")
         sys.exit(1)
 
-    # Handle graceful termination
     running = True
 
     def handle_signal(sig, frame):
@@ -96,13 +106,49 @@ def main():
     sys.stdout.flush()
 
     last_log_time = 0.0
+    last_unlock_time = 0.0
+    was_cinnamon_active = is_cinnamon_screensaver_active()
 
     while running:
         try:
+            is_cinnamon_active = is_cinnamon_screensaver_active()
+
+            # Durum 1: Sistem (Cinnamon) şu anda kilitli
+            if is_cinnamon_active:
+                if not was_cinnamon_active:
+                    print("[*] Cinnamon sistem kilit ekranı aktif hale geldi.")
+                    sys.stdout.flush()
+                was_cinnamon_active = True
+
+                # Kilit ekranı aktifken arkada The Frame kalmışsa hemen temizle
+                if is_screensaver_binary_running():
+                    print("[*] Kilit ekranı altında The Frame tespit edildi, sonlandırılıyor...")
+                    sys.stdout.flush()
+                    kill_existing_screensavers()
+
+                time.sleep(CHECK_INTERVAL_SECONDS)
+                continue
+
+            # Durum 2: Kullanıcı kilit ekranını şifre girip henüz açtı
+            if was_cinnamon_active:
+                print("[+] Sistem kilit ekranı açıldı. Kullanıcı aktif, The Frame için bekleme süresi başlatıldı.")
+                sys.stdout.flush()
+                was_cinnamon_active = False
+                last_unlock_time = time.time()
+                kill_existing_screensavers()
+                time.sleep(CHECK_INTERVAL_SECONDS)
+                continue
+
+            # Durum 3: Kilit açıldıktan sonra koruma süresi (en az IDLE_THRESHOLD_SECONDS geçmeli)
+            now = time.time()
+            time_since_unlock = now - last_unlock_time
+            if time_since_unlock < IDLE_THRESHOLD_SECONDS:
+                time.sleep(CHECK_INTERVAL_SECONDS)
+                continue
+
             idle_sec = get_idle_seconds()
 
             # Periyodik durum bilgisi (Her 60 saniyede bir log yaz)
-            now = time.time()
             if now - last_log_time >= 60.0 and idle_sec >= 30.0:
                 print(f"[*] Sistem inaktiflik süresi: {idle_sec:.0f}s / {IDLE_THRESHOLD_SECONDS}s")
                 sys.stdout.flush()
@@ -114,23 +160,40 @@ def main():
                     print(f"[*] İnaktiflik eşiği aşıldı ({idle_sec:.0f}s >= {IDLE_THRESHOLD_SECONDS}s). The Frame Ekran Koruyucu başlatılıyor...")
                     sys.stdout.flush()
 
-                    # Ekran koruyucuyu tam ekran başlat ve kullanıcı müdahalesine kadar bekle
-                    subprocess.run([
+                    # Ekran koruyucuyu Popen ile başlat ve Cinnamon kilit ekranını dinamik olarak izle:
+                    proc = subprocess.Popen([
                         BINARY_PATH,
                         "--fullscreen",
                         "--screensaver",
                         "--lock-on-exit",
                     ])
 
-                    print("[*] The Frame Ekran Koruyucudan çıkıldı (kullanıcı müdahalesi). Sistem kilitlendi.")
+                    # Ekran koruyucu açıkken döngüde kontrol et:
+                    while proc.poll() is None:
+                        # Eğer sistemin kendi kilit ekranı (Cinnamon zaman aşımı vb.) araya girdiyse:
+                        if is_cinnamon_screensaver_active():
+                            print("[*] Cinnamon sistem kilit ekranı araya girdi. The Frame altta kalmasın diye sonlandırılıyor...")
+                            sys.stdout.flush()
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=2)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                            was_cinnamon_active = True
+                            break
+                        time.sleep(1)
+
+                    print("[*] The Frame oturumu tamamlandı.")
                     sys.stdout.flush()
                     last_log_time = time.time()
+                    last_unlock_time = time.time()
                     time.sleep(3)
 
             time.sleep(CHECK_INTERVAL_SECONDS)
         except Exception as e:
             time.sleep(CHECK_INTERVAL_SECONDS)
 
+    kill_existing_screensavers()
     print("[+] The Frame Idle Watcher stopped cleanly.")
 
 

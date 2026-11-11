@@ -51,6 +51,14 @@ class _ScreensaverScreenState extends State<ScreensaverScreen> {
 
   void _triggerSystemLock() {
     try {
+      // Eğer Cinnamon ekran koruyucusu / kilit ekranı zaten aktifse tekrar kilitleme komutu gönderme
+      try {
+        final check = Process.runSync('cinnamon-screensaver-command', ['-q']);
+        if (check.stdout.toString().toLowerCase().contains('is active')) {
+          return;
+        }
+      } catch (_) {}
+
       if (File('/usr/bin/cinnamon-screensaver-command').existsSync()) {
         Process.runSync('cinnamon-screensaver-command', ['--lock']);
         return;

@@ -2,10 +2,11 @@
 """
 Samsung The Frame Art Screensaver - X11 Boşta Kalma (Idle) ve Parlaklık Yönetim Daemon'ı
 Linux Mint / Cinnamon ortamında boşta kalma süresini takip eder.
-Belirlenen süre (varsayılan: 5 dakika / 300 sn) aşıldığında:
+Belirlenen süre (varsayılan: 180 sn / 3 dk) aşıldığında:
   1. Monitör parlaklığını mat tablo hissi için %65 seviyesine çeker (xrandr).
   2. Ekran koruyucuyu tam ekran başlatır.
-  3. Fare/klavye ile çıkıldığında parlaklığı anında %100'e (1.0) geri yükler.
+  3. Cinnamon kilit ekranı araya girdiğinde The Frame'i sonlandırarak çift şifre sorununu önler.
+  4. Çıkıldığında parlaklığı anında %100'e (1.0) geri yükler.
 """
 
 import sys
@@ -71,6 +72,18 @@ def set_brightness(monitors, level: float):
         except Exception:
             pass
 
+def is_cinnamon_screensaver_active() -> bool:
+    try:
+        out = subprocess.check_output(
+            ["cinnamon-screensaver-command", "-q"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        )
+        return "is active" in out.lower()
+    except Exception:
+        return False
+
 def main():
     parser = argparse.ArgumentParser(description="The Frame Screensaver Daemon")
     parser.add_argument(
@@ -111,23 +124,55 @@ def main():
     signal.signal(signal.SIGTERM, cleanup)
 
     tracker = X11IdleTracker()
-    is_screensaver_active = False
+    last_unlock_time = 0.0
+    was_cinnamon_active = is_cinnamon_screensaver_active()
 
     try:
         while True:
+            is_cinnamon_active = is_cinnamon_screensaver_active()
+
+            if is_cinnamon_active:
+                was_cinnamon_active = True
+                set_brightness(monitors, 1.0)
+                time.sleep(3)
+                continue
+
+            if was_cinnamon_active:
+                was_cinnamon_active = False
+                last_unlock_time = time.time()
+                set_brightness(monitors, 1.0)
+                time.sleep(3)
+                continue
+
+            now = time.time()
+            if now - last_unlock_time < args.timeout:
+                time.sleep(3)
+                continue
+
             idle_seconds = tracker.get_idle_seconds()
 
-            if idle_seconds >= args.timeout and not is_screensaver_active:
+            if idle_seconds >= args.timeout:
                 print(f"[+] {int(idle_seconds)} saniye boşta kalındı. The Frame devreye giriyor...")
-                is_screensaver_active = True
+                set_brightness(monitors, args.dim_brightness)
 
-                # Tam ekran koruyucuyu çalıştır
-                try:
-                    subprocess.run([binary_path, "--fullscreen"], check=False)
-                finally:
-                    print("[+] Kullanıcı faaliyeti algılandı.")
-                    is_screensaver_active = False
-                    time.sleep(2)
+                # Ekran koruyucuyu Popen ile başlat ve Cinnamon kilit ekranını izle
+                proc = subprocess.Popen([binary_path, "--fullscreen", "--screensaver", "--lock-on-exit"])
+
+                while proc.poll() is None:
+                    if is_cinnamon_screensaver_active():
+                        print("[*] Cinnamon kilit ekranı araya girdi. The Frame kapatılıyor...")
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                        was_cinnamon_active = True
+                        break
+                    time.sleep(1)
+
+                set_brightness(monitors, 1.0)
+                last_unlock_time = time.time()
+                time.sleep(2)
 
             time.sleep(2)
 
