@@ -7,19 +7,22 @@ import '../../data/artwork_repository.dart';
 
 class ScreensaverController extends ChangeNotifier {
   final ArtworkRepository _repository;
+  final int maxHistoryCapacity;
 
   List<Artwork> _artworks = [...ArtworkRepository.bundledMasterpieces];
   int _currentIndex = 0;
   final List<int> _history = [];
-  final Set<String> _seenInSession = <String>{};
+  final Set<String> _shownArtworkIds = <String>{};
   FrameSettings _settings = const FrameSettings();
   bool _isLoading = true;
   bool _isFetchingOnline = false;
   String? _statusMessage;
   Timer? _cycleTimer;
 
-  ScreensaverController({ArtworkRepository? repository})
-      : _repository = repository ?? ArtworkRepository();
+  ScreensaverController({
+    ArtworkRepository? repository,
+    this.maxHistoryCapacity = 100,
+  }) : _repository = repository ?? ArtworkRepository();
 
   List<Artwork> get artworks => _artworks;
   int get currentIndex => _currentIndex;
@@ -30,8 +33,10 @@ class ScreensaverController extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get isFetchingOnline => _isFetchingOnline;
   String? get statusMessage => _statusMessage;
-  int get unseenInSessionCount =>
-      _artworks.where((a) => !_seenInSession.contains(a.id)).length;
+  Set<String> get shownArtworkIds => Set.unmodifiable(_shownArtworkIds);
+  int get unseenCount =>
+      _artworks.where((a) => !_shownArtworkIds.contains(a.id)).length;
+  int get unseenInSessionCount => unseenCount;
 
   Future<void> initialize() async {
     _isLoading = true;
@@ -43,15 +48,33 @@ class ScreensaverController extends ChangeNotifier {
       if (loaded.isNotEmpty) {
         _artworks = loaded;
       }
+
+      final savedHistory = await _repository.loadShownHistory();
+      _shownArtworkIds.clear();
+      _shownArtworkIds.addAll(savedHistory);
+
+      // Kapasite sınırını aştıysa sıfırla
+      if (_shownArtworkIds.length >= maxHistoryCapacity) {
+        _shownArtworkIds.clear();
+      }
     } catch (_) {
       _artworks = [...ArtworkRepository.bundledMasterpieces];
     } finally {
       _isLoading = false;
 
-      // 1. Birinci resmi İLK ANDAN İTİBAREN rastgele seç:
+      // 1. Birinci resmi daha önce gösterilmemiş olanlar arasından rastgele seç:
       if (_artworks.isNotEmpty) {
-        _currentIndex = Random().nextInt(_artworks.length);
-        _seenInSession.add(_artworks[_currentIndex].id);
+        var unvisited =
+            _artworks.where((a) => !_shownArtworkIds.contains(a.id)).toList();
+        if (unvisited.isEmpty) {
+          // Tüm eserler daha önce gösterilmiş, döngüyü sıfırla
+          _shownArtworkIds.clear();
+          unvisited = _artworks;
+        }
+
+        final initialArt = unvisited[Random().nextInt(unvisited.length)];
+        _currentIndex = _artworks.indexOf(initialArt);
+        await _recordArtworkShown(initialArt.id);
       }
 
       notifyListeners();
@@ -60,6 +83,22 @@ class ScreensaverController extends ChangeNotifier {
       // Gösterimde kalan tablo havuzunu kontrol et, tükenmeden arka planda önceden indir:
       _checkAndPrefetchBuffer();
     }
+  }
+
+  Future<void> _recordArtworkShown(String id) async {
+    _shownArtworkIds.add(id);
+    if (_shownArtworkIds.length >= maxHistoryCapacity) {
+      _shownArtworkIds.clear();
+      _shownArtworkIds.add(id);
+    }
+    await _repository.saveShownHistory(_shownArtworkIds.toList());
+  }
+
+  /// Gösterim geçmişini temizler ve diski sıfırlar
+  Future<void> clearHistory() async {
+    _shownArtworkIds.clear();
+    await _repository.clearShownHistory();
+    notifyListeners();
   }
 
   void _startAutoCycleTimer() {
@@ -80,38 +119,42 @@ class ScreensaverController extends ChangeNotifier {
     _repository.saveSettings(_settings);
   }
 
-  /// Her geçişte oturumda daha önce gösterilmemiş RASTGELE bir tablo seçer.
-  /// Aynı oturumda bir gösterilen tablo bir daha gösterilmez!
+  /// Her geçişte daha önce gösterilmemiş RASTGELE bir tablo seçer.
+  /// Gösterilen eser diske kaydedilir; tüm eserler bitene kadar tekrarlanmaz.
   void nextArtwork({bool random = true}) {
     if (_artworks.isEmpty) return;
 
     _history.add(_currentIndex);
     if (_history.length > 50) _history.removeAt(0);
 
-    // Oturumda henüz gösterilmemiş (unseen) tabloları filtrele:
-    final unvisited = _artworks.where((a) => !_seenInSession.contains(a.id)).toList();
+    // Henüz gösterilmemiş (unvisited) tabloları filtrele:
+    var unvisited =
+        _artworks.where((a) => !_shownArtworkIds.contains(a.id)).toList();
 
     if (unvisited.isNotEmpty) {
       final nextArt = random
           ? unvisited[Random().nextInt(unvisited.length)]
           : unvisited.first;
       _currentIndex = _artworks.indexOf(nextArt);
-      _seenInSession.add(nextArt.id);
     } else {
       // Gösterimde kalan tablo kalmadıysa:
       // Hemen önceden indirme mekanizmasını zorla devreye sok
       _checkAndPrefetchBuffer(forceImmediate: true);
 
-      // Tüm mevcut havuz tüketildiyse oturum hafızasını sıfırla ve mevcut tablodan farklı olanı seç
-      _seenInSession.clear();
-      final candidates = _artworks.where((a) => a.id != currentArtwork.id).toList();
-      if (candidates.isNotEmpty) {
-        final nextArt = candidates[Random().nextInt(candidates.length)];
-        _currentIndex = _artworks.indexOf(nextArt);
-        _seenInSession.add(nextArt.id);
+      // Tüm mevcut havuz tüketildiyse hafızayı sıfırla ve mevcut tablodan farklı olanı seç
+      _shownArtworkIds.clear();
+      if (_artworks.length > 1) {
+        _shownArtworkIds.add(currentArtwork.id);
       }
+      unvisited =
+          _artworks.where((a) => !_shownArtworkIds.contains(a.id)).toList();
+      final nextArt = unvisited.isNotEmpty
+          ? (random ? unvisited[Random().nextInt(unvisited.length)] : unvisited.first)
+          : _artworks.first;
+      _currentIndex = _artworks.indexOf(nextArt);
     }
 
+    _recordArtworkShown(currentArtwork.id);
     notifyListeners();
 
     // Gösterimde kalan tablo sayısı 3 veya daha azsa arka planda sessizce yeni şaheserler indir:
@@ -151,7 +194,7 @@ class ScreensaverController extends ChangeNotifier {
         // Eğer hiç gösterilecek tablo kalmamışsa hemen bu yeni indirilen şahesere geç:
         if (unvisitedCount == 0 && forceImmediate) {
           _currentIndex = _artworks.length - 1;
-          _seenInSession.add(newArt.id);
+          _recordArtworkShown(newArt.id);
           _statusMessage = '🏛️ Yeni Şaheser: ${newArt.title}';
         }
       }
@@ -190,7 +233,7 @@ class ScreensaverController extends ChangeNotifier {
         } else {
           _currentIndex = idx;
         }
-        _seenInSession.add(newArt.id);
+        _recordArtworkShown(newArt.id);
         _statusMessage = '✅ Yeni Eser İndirildi: ${newArt.title} (${newArt.artist})';
       } else {
         nextArtwork();

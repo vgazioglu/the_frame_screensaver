@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:the_frame_screensaver/core/models/artwork.dart';
@@ -70,17 +71,25 @@ void main() {
   });
 
   test('ScreensaverController does not repeat artworks in the same session', () async {
-    final controller = ScreensaverController();
-    await controller.initialize();
+    final tempDir = Directory.systemTemp.createTempSync('screensaver_session_');
+    try {
+      final repo = ArtworkRepository(cacheDir: tempDir);
+      final controller = ScreensaverController(repository: repo);
+      await controller.initialize();
 
-    final shownIds = <String>{};
-    shownIds.add(controller.currentArtwork.id);
-
-    final totalToAdvance = controller.artworks.length - 1;
-    for (int i = 0; i < totalToAdvance; i++) {
-      controller.nextArtwork();
-      expect(shownIds.contains(controller.currentArtwork.id), isFalse);
+      final shownIds = <String>{};
       shownIds.add(controller.currentArtwork.id);
+
+      final totalToAdvance = controller.artworks.length - 1;
+      for (int i = 0; i < totalToAdvance; i++) {
+        controller.nextArtwork();
+        expect(shownIds.contains(controller.currentArtwork.id), isFalse);
+        shownIds.add(controller.currentArtwork.id);
+      }
+    } finally {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
     }
   });
 
@@ -131,5 +140,112 @@ void main() {
     expect(recovered.autoCycleSeconds, 180);
     expect(recovered.enableAmbientDimming, true);
     expect(recovered.fitMode, ArtworkFitMode.samsungNoMat);
+  });
+
+  test('ArtworkRepository saves, loads, and clears shown history to disk', () async {
+    final tempDir = Directory.systemTemp.createTempSync('repo_test_');
+    try {
+      final repo = ArtworkRepository(cacheDir: tempDir);
+      expect(await repo.loadShownHistory(), isEmpty);
+
+      await repo.saveShownHistory(['art-1', 'art-2', 'art-3']);
+      final loaded = await repo.loadShownHistory();
+      expect(loaded, ['art-1', 'art-2', 'art-3']);
+
+      await repo.clearShownHistory();
+      expect(await repo.loadShownHistory(), isEmpty);
+    } finally {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    }
+  });
+
+  test('ScreensaverController remembers shown artworks across sessions via disk', () async {
+    final tempDir = Directory.systemTemp.createTempSync('screensaver_history_');
+    try {
+      final repo = ArtworkRepository(cacheDir: tempDir);
+      final controller1 = ScreensaverController(repository: repo);
+      await controller1.initialize();
+
+      final firstShownId = controller1.currentArtwork.id;
+      expect(controller1.shownArtworkIds.contains(firstShownId), isTrue);
+
+      // Diskteki geçmişi doğrula
+      final savedHistory = await repo.loadShownHistory();
+      expect(savedHistory.contains(firstShownId), isTrue);
+
+      // Yeni bir oturum başlatıldığında daha önce gösterilen eser tekrar ilk olarak seçilmemeli (alternatif varsa)
+      final controller2 = ScreensaverController(repository: repo);
+      await controller2.initialize();
+
+      if (controller2.artworks.length > 1) {
+        expect(controller2.currentArtwork.id, isNot(firstShownId));
+      }
+    } finally {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    }
+  });
+
+  test('ScreensaverController resets history when maxHistoryCapacity is reached to prevent file bloat', () async {
+    final tempDir = Directory.systemTemp.createTempSync('screensaver_cap_');
+    try {
+      final repo = ArtworkRepository(cacheDir: tempDir);
+      // Kapasiteyi küçük tutarak (ör. 3) sıfırlama mekanizmasını test et
+      final controller = ScreensaverController(
+        repository: repo,
+        maxHistoryCapacity: 3,
+      );
+      await controller.initialize();
+
+      // İlerleterek geçmişi doldur
+      controller.nextArtwork();
+      controller.nextArtwork();
+      controller.nextArtwork();
+
+      // maxHistoryCapacity aşıldığında dosya sonsuza kadar büyümemeli, sıfırlanmalı
+      expect(controller.shownArtworkIds.length, lessThanOrEqualTo(3));
+      final savedHistory = await repo.loadShownHistory();
+      expect(savedHistory.length, lessThanOrEqualTo(3));
+    } finally {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    }
+  });
+
+  test('ScreensaverController resets history when all artworks are shown without back-to-back repetition', () async {
+    final tempDir = Directory.systemTemp.createTempSync('screensaver_cycle_');
+    try {
+      final repo = ArtworkRepository(cacheDir: tempDir);
+      final controller = ScreensaverController(repository: repo);
+      await controller.initialize();
+
+      final total = controller.artworks.length;
+      final firstRoundIds = <String>{controller.currentArtwork.id};
+
+      for (int i = 0; i < total - 1; i++) {
+        controller.nextArtwork();
+        firstRoundIds.add(controller.currentArtwork.id);
+      }
+
+      // Tüm eserler ilk turda gösterildi
+      expect(firstRoundIds.length, total);
+
+      final lastIdBeforeReset = controller.currentArtwork.id;
+      // Bir sonraki geçiş döngüyü sıfırlayarak yeni bir eser seçmeli
+      controller.nextArtwork();
+
+      if (total > 1) {
+        // Sıfırlama sonrasında hemen bir önceki eser peş peşe tekrarlanmamalı
+        expect(controller.currentArtwork.id, isNot(lastIdBeforeReset));
+      }
+    } finally {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    }
   });
 }

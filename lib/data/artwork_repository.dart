@@ -11,14 +11,25 @@ class ArtworkRepository {
   static const String _catalogFileName = 'catalog.json';
   static const String _paintingsDirName = 'paintings';
   static const String _settingsFileName = 'settings.json';
+  static const String _shownHistoryFileName = 'shown_history.json';
+
+  final Directory? _customCacheDir;
+  final Directory? _customConfigDir;
 
   late Directory _cacheDir;
   late Directory _paintingsDir;
   late File _catalogFile;
   late Directory _configDir;
   late File _settingsFile;
+  late File _shownHistoryFile;
 
   bool _initialized = false;
+
+  ArtworkRepository({
+    Directory? cacheDir,
+    Directory? configDir,
+  })  : _customCacheDir = cacheDir,
+        _customConfigDir = configDir;
 
   // MSI 27" PRO MP275Q (2560x1440 WQHD 16:9 = 1.78) monitöre tam uyumlu
   // Geniş Ekran (Widescreen >= 1.45..2.10) Dahili Yağlıboya Şaheserler
@@ -265,12 +276,17 @@ class ArtworkRepository {
     _initialized = true;
 
     final home = Platform.environment['HOME'] ?? '';
-    _cacheDir = Directory(p.join(home, '.cache', 'the_frame_screensaver'));
+    _cacheDir = _customCacheDir ?? Directory(p.join(home, '.cache', 'the_frame_screensaver'));
     _paintingsDir = Directory(p.join(_cacheDir.path, _paintingsDirName));
     _catalogFile = File(p.join(_cacheDir.path, _catalogFileName));
+    _shownHistoryFile = File(p.join(_cacheDir.path, _shownHistoryFileName));
 
-    _configDir = Directory(p.join(home, '.config', 'the_frame_screensaver'));
+    _configDir = _customConfigDir ?? Directory(p.join(home, '.config', 'the_frame_screensaver'));
     _settingsFile = File(p.join(_configDir.path, _settingsFileName));
+
+    if (!await _cacheDir.exists()) {
+      await _cacheDir.create(recursive: true);
+    }
 
     if (!await _paintingsDir.exists()) {
       await _paintingsDir.create(recursive: true);
@@ -279,6 +295,41 @@ class ArtworkRepository {
     if (!await _configDir.exists()) {
       await _configDir.create(recursive: true);
     }
+  }
+
+  /// Diskte kayıtlı daha önce gösterilen tablo kimliklerini (~/.cache/the_frame_screensaver/shown_history.json) yükler
+  Future<List<String>> loadShownHistory() async {
+    await init();
+    if (await _shownHistoryFile.exists()) {
+      try {
+        final content = await _shownHistoryFile.readAsString();
+        final list = jsonDecode(content) as List<dynamic>;
+        return list.map((e) => e.toString()).toList();
+      } catch (_) {}
+    }
+    return [];
+  }
+
+  /// Gösterilen tablo kimliklerini diske kaydeder
+  Future<void> saveShownHistory(List<String> history) async {
+    await init();
+    try {
+      if (!await _cacheDir.exists()) {
+        await _cacheDir.create(recursive: true);
+      }
+      final jsonStr = jsonEncode(history);
+      await _shownHistoryFile.writeAsString(jsonStr, flush: true);
+    } catch (_) {}
+  }
+
+  /// Gösterim geçmişi dosyasını temizler / sıfırlar
+  Future<void> clearShownHistory() async {
+    await init();
+    try {
+      if (await _shownHistoryFile.exists()) {
+        await _shownHistoryFile.delete();
+      }
+    } catch (_) {}
   }
 
   /// Loads saved frame settings from ~/.config/the_frame_screensaver/settings.json
