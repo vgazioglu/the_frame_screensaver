@@ -84,6 +84,98 @@ def is_cinnamon_screensaver_active() -> bool:
     except Exception:
         return False
 
+MEDIA_APP_KEYWORDS = (
+    "firefox", "chrome", "chromium", "brave", "opera", "vivaldi",
+    "zen", "librewolf", "floorp", "vlc", "mpv", "celluloid", "totem",
+    "spotify", "rhythmbox", "clementine", "audacious", "deadbeef",
+    "plex", "kodi", "smplayer", "strawberry", "youtube-music",
+)
+
+def is_audio_playing() -> bool:
+    """Yalnızca bilinen medya ve tarayıcı uygulamalarının aktif ses çalma durumunu denetler."""
+    try:
+        out = subprocess.check_output(
+            ['pactl', 'list', 'sink-inputs'],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=1
+        )
+        blocks = out.split('Sink Input #')
+        for block in blocks[1:]:
+            lines = [l.strip() for l in block.splitlines()]
+            corked = False
+            muted = False
+            app_name = ""
+            app_binary = ""
+            for line in lines:
+                if line.startswith('Corked:'):
+                    corked = 'yes' in line.lower()
+                elif line.startswith('Mute:'):
+                    muted = 'yes' in line.lower()
+                elif line.startswith('application.name ='):
+                    app_name = line.split('=', 1)[1].strip().strip('"').lower()
+                elif line.startswith('application.process.binary ='):
+                    app_binary = line.split('=', 1)[1].strip().strip('"').lower()
+
+            if not corked and not muted:
+                if any(kw in app_name or kw in app_binary for kw in MEDIA_APP_KEYWORDS):
+                    return True
+    except Exception:
+        pass
+    return False
+
+def is_fullscreen_active() -> bool:
+    """Aktif pencerenin tam ekranda (YouTube, film veya oyun) olup olmadığını denetler."""
+    try:
+        out = subprocess.check_output(
+            ['xprop', '-root', '_NET_ACTIVE_WINDOW'],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=1
+        )
+        if 'window id #' not in out:
+            return False
+        win_id = out.split('window id #')[1].strip().split()[0]
+        if win_id in ('0x0', '0'):
+            return False
+        state_out = subprocess.check_output(
+            ['xprop', '-id', win_id, '_NET_WM_STATE'],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=1
+        )
+        return '_NET_WM_STATE_FULLSCREEN' in state_out
+    except Exception:
+        return False
+
+def is_session_inhibited() -> bool:
+    """Firefox veya medya oynatıcıların DBus inhibit (ekranı açık tut) kilidini denetler."""
+    for dest, path, iface in [
+        ('org.gnome.SessionManager', '/org/gnome/SessionManager', 'org.gnome.SessionManager'),
+        ('org.cinnamon.SessionManager', '/org/cinnamon/SessionManager', 'org.cinnamon.SessionManager'),
+    ]:
+        try:
+            out = subprocess.check_output([
+                'dbus-send', '--session', f'--dest={dest}',
+                '--type=method_call', '--print-reply',
+                path, f'{iface}.IsInhibited', 'uint32:8'
+            ], text=True, stderr=subprocess.DEVNULL, timeout=1)
+            if 'boolean true' in out.lower():
+                return True
+        except Exception:
+            pass
+    return False
+
+def get_active_media_reason() -> str:
+    """Video veya medya oynatılıyorsa sebebini döner, yoksa boş döner."""
+    if is_fullscreen_active():
+        return "Tam ekran pencere / video aktif"
+    if is_audio_playing():
+        return "Aktif ses akışı (video / müzik) çalınıyor"
+    if is_session_inhibited():
+        return "Masaüstü Inhibit kilidi (tarayıcı video kilidi) aktif"
+    return ""
+
 def main():
     parser = argparse.ArgumentParser(description="The Frame Screensaver Daemon")
     parser.add_argument(
@@ -125,6 +217,7 @@ def main():
 
     tracker = X11IdleTracker()
     last_unlock_time = 0.0
+    last_busy_time = time.time()
     was_cinnamon_active = is_cinnamon_screensaver_active()
 
     try:
@@ -140,12 +233,25 @@ def main():
             if was_cinnamon_active:
                 was_cinnamon_active = False
                 last_unlock_time = time.time()
+                last_busy_time = time.time()
                 set_brightness(monitors, 1.0)
                 time.sleep(3)
                 continue
 
             now = time.time()
             if now - last_unlock_time < args.timeout:
+                time.sleep(3)
+                continue
+
+            # Tarayıcıda (Firefox vb.) veya medya oynatıcıda video/müzik izleniyorsa ekran koruyucuyu engelle
+            media_reason = get_active_media_reason()
+            if media_reason:
+                last_busy_time = now
+                time.sleep(3)
+                continue
+
+            # Medya/video bittikten sonra da tam args.timeout süresi kadar beklenmesini sağla
+            if now - last_busy_time < args.timeout:
                 time.sleep(3)
                 continue
 
@@ -172,6 +278,7 @@ def main():
 
                 set_brightness(monitors, 1.0)
                 last_unlock_time = time.time()
+                last_busy_time = time.time()
                 time.sleep(2)
 
             time.sleep(2)
