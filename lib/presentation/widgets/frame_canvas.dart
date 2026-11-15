@@ -137,8 +137,8 @@ class _FrameCanvasState extends State<FrameCanvas> {
         // - errorBuilder sayesinde asla siyah ekran oluşmaz.
         if (widget.settings.fitMode.isSamsungMode) {
           final focalAlignment = _calculateFocalAlignment();
-          // Oranı 16:9'dan dar olan tablolarda dikey overscan yapmayarak tavan payını azami koruyoruz
-          final overscanScale = _imageAspect < 1.65 ? 1.0 : 1.02;
+          // %4 TV overscan ile kenardaki müze tarama çizgileri/tuval kenarları elenir, sıfır boşluk kalır
+          const overscanScale = 1.04;
 
           return Stack(
             fit: StackFit.expand,
