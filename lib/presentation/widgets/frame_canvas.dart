@@ -101,25 +101,15 @@ class _FrameCanvasState extends State<FrameCanvas> {
     return const Alignment(0.0, -0.12);
   }
 
-  static List<double> _calculateArtModeColorMatrix(double factor) {
-    // 2K Monitör İçin "Old Master Dammar Varnish & Pigment" Optik Kalibrasyonu:
-    // 1. Akşam/Gece saatlerinde (18:00-07:00) 2800K galeri halojen sıcaklığını hafifçe artırır.
-    // 2. Dijital LED beyaz parlamasını (Lead-White Roll-off) yumuşatır, mavi LED piklerini kırar.
-    // 3. Dijital sıfır siyahı (#000000), gerçek yağlıboya "Fildişi Siyahı / Yanık Umber"
-    //    pigment derinliğine (+4.5R, +3.5G, +1.8B) taşır.
+  static Color _calculateArtModeModulateColor(double factor) {
     final hour = DateTime.now().hour;
     final isNight = hour >= 18 || hour < 7;
     final effectiveFactor = isNight ? (factor * 0.94).clamp(0.45, 1.0) : factor;
 
-    final r = effectiveFactor * (isNight ? 1.035 : 1.02);
-    final g = effectiveFactor * 0.995;
-    final b = effectiveFactor * (isNight ? 0.90 : 0.93);
-    return [
-      r, 0, 0, 0, 4.5,
-      0, g, 0, 0, 3.5,
-      0, 0, b, 0, 1.8,
-      0, 0, 0, 1.0, 0,
-    ];
+    final r = (effectiveFactor * (isNight ? 1.02 : 1.01) * 255).round().clamp(0, 255);
+    final g = (effectiveFactor * 0.995 * 255).round().clamp(0, 255);
+    final b = (effectiveFactor * (isNight ? 0.91 : 0.94) * 255).round().clamp(0, 255);
+    return Color.fromARGB(255, r, g, b);
   }
 
   @override
@@ -146,34 +136,30 @@ class _FrameCanvasState extends State<FrameCanvas> {
               // Tablonun Kendisi (Uçtan uca, en-boy oranı korunarak yayılan saf tablo)
               Transform.scale(
                 scale: overscanScale,
-                child: ColorFiltered(
-                  colorFilter: widget.settings.enableAmbientDimming
-                      ? ColorFilter.matrix(
-                          _calculateArtModeColorMatrix(
-                            widget.settings.matteDimmingFactor,
-                          ),
+                child: Image(
+                  image: _getImageProvider(widget.artwork),
+                  fit: BoxFit.cover, // Aspect ratio %100 korunur, asla basık/yayvan yapmaz!
+                  width: double.infinity,
+                  height: double.infinity,
+                  alignment: focalAlignment,
+                  filterQuality: FilterQuality.high,
+                  color: widget.settings.enableAmbientDimming
+                      ? _calculateArtModeModulateColor(
+                          widget.settings.matteDimmingFactor,
                         )
-                      : const ColorFilter.mode(
-                          Colors.transparent,
-                          BlendMode.dst,
-                        ),
-                  child: Image(
-                    image: _getImageProvider(widget.artwork),
-                    fit: BoxFit.cover, // Aspect ratio %100 korunur, asla basık/yayvan yapmaz!
-                    width: double.infinity,
-                    height: double.infinity,
-                    alignment: focalAlignment,
-                    filterQuality: FilterQuality.high,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Image.asset(
-                        'assets/paintings/van_gogh_cypresses.jpg',
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        height: double.infinity,
-                        alignment: const Alignment(0.0, -0.15),
-                      );
-                    },
-                  ),
+                      : null,
+                  colorBlendMode: widget.settings.enableAmbientDimming
+                      ? BlendMode.modulate
+                      : null,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Image.asset(
+                      'assets/paintings/van_gogh_cypresses.jpg',
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: double.infinity,
+                      alignment: const Alignment(0.0, -0.15),
+                    );
+                  },
                 ),
               ),
 
@@ -290,22 +276,18 @@ class _FrameCanvasState extends State<FrameCanvas> {
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
-                        ColorFiltered(
-                          colorFilter: widget.settings.enableAmbientDimming
-                              ? ColorFilter.matrix(
-                                  _calculateArtModeColorMatrix(
-                                    widget.settings.matteDimmingFactor,
-                                  ),
+                        Image(
+                          image: _getImageProvider(widget.artwork),
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.high,
+                          color: widget.settings.enableAmbientDimming
+                              ? _calculateArtModeModulateColor(
+                                  widget.settings.matteDimmingFactor,
                                 )
-                              : const ColorFilter.mode(
-                                  Colors.transparent,
-                                  BlendMode.dst,
-                                ),
-                          child: Image(
-                            image: _getImageProvider(widget.artwork),
-                            fit: BoxFit.contain,
-                            filterQuality: FilterQuality.high,
-                          ),
+                              : null,
+                          colorBlendMode: widget.settings.enableAmbientDimming
+                              ? BlendMode.modulate
+                              : null,
                         ),
 
                         // Yağlı boya mat tuval dokusu

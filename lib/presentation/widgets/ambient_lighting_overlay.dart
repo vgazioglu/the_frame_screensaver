@@ -14,53 +14,14 @@ class AmbientLightingOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final isNight = _isEveningOrNight;
 
+    // Impeller OpenGLES (OpenGLESSDF) çok duraklı (multi-stop) Linear/Radial
+    // gradyanlarda keskin basamak/şerit (y=45px) oluşturduğu için,
+    // galeri atmosferi homojen sıcak mat vernik katmanı olarak uygulanır.
     return IgnorePointer(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // 1. Overhead Museum Track Spotlight Cone (Tavan Spotu & Vernik Yansıması)
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: const Alignment(0.0, -0.48),
-                radius: 1.15,
-                focal: const Alignment(0.0, -0.65),
-                focalRadius: 0.08,
-                colors: [
-                  // Spotun tuvalin üst-orta kısmındaki vernikte oluşturduğu sıcak 3000K aydınlanma
-                  isNight
-                      ? const Color(0x16FFE8C2)
-                      : const Color(0x10FFF6E5),
-                  const Color(0x05FFF2DC),
-                  Colors.transparent,
-                  // Alt köşelere doğru doğal galeri ışık düşüşü (inverse-square falloff)
-                  isNight
-                      ? const Color(0x38080604)
-                      : const Color(0x22080604),
-                ],
-                stops: const [0.0, 0.32, 0.68, 1.0],
-              ),
-            ),
-          ),
-
-          // 2. Vertical Gallery Wall Wash (Yukarıdan aşağıya doğal ışık süzülmesi)
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  const Color(0x08FFF4E0),
-                  Colors.transparent,
-                  isNight
-                      ? const Color(0x24050403)
-                      : const Color(0x14050403),
-                ],
-                stops: const [0.0, 0.55, 1.0],
-              ),
-            ),
-          ),
-        ],
+      child: ColoredBox(
+        color: isNight
+            ? const Color(0x14080604)
+            : const Color(0x0A080604),
       ),
     );
   }

@@ -361,7 +361,9 @@ class ArtworkRepository {
   static bool isLandscapeJpeg(File file) {
     try {
       if (!file.existsSync()) return true;
-      final bytes = file.readAsBytesSync();
+      final raf = file.openSync();
+      final bytes = raf.readSync(65536);
+      raf.closeSync();
       if (bytes.length < 24) return false;
 
       // PNG IHDR desteği (manuel indirilen PNG dosyaları için)
@@ -633,8 +635,7 @@ class ArtworkRepository {
 
             if (await f.exists() &&
                 await f.length() > 50000 &&
-                isLandscapeJpeg(f) &&
-                !hasFrameOrExcessiveBorders(f)) {
+                isLandscapeJpeg(f)) {
               artworks.add(art);
               seenKeys.add(key);
               seenFileNames.add(fileName);
