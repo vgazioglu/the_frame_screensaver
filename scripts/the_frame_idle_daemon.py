@@ -158,13 +158,11 @@ def is_fullscreen_active() -> bool:
 
 
 def get_active_media_reason() -> str:
-    """Video veya medya oynatılıyorsa sebebini döner, yoksa boş döner."""
+    """Video oynatılıyorsa (Firefox/tarayıcı inhibit kilidi veya tam ekran) sebebini döner."""
     if is_session_inhibited():
-        return "Tarayıcı (Firefox) masaüstü ekran koruyucu kilidi (Inhibit) aktif"
+        return "Tarayıcı (Firefox) video izleme kilidi (Inhibit) aktif"
     if is_fullscreen_active():
         return "Tam ekran pencere / video aktif"
-    if is_audio_playing():
-        return "Aktif ses akışı (video / müzik) çalınıyor"
     return ""
 
 

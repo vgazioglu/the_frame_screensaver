@@ -361,21 +361,80 @@ class ArtworkRepository {
   static bool isLandscapeJpeg(File file) {
     try {
       if (!file.existsSync()) return true;
-      final bytes = file.openSync().readSync(4096);
-      for (int i = 0; i < bytes.length - 8; i++) {
-        if (bytes[i] == 0xFF &&
-            (bytes[i + 1] >= 0xC0 && bytes[i + 1] <= 0xC3) &&
-            bytes[i + 1] != 0xC4) {
-          final h = (bytes[i + 5] << 8) | bytes[i + 6];
-          final w = (bytes[i + 7] << 8) | bytes[i + 8];
-          if (h > 0) {
-            final ratio = w / h;
-            // MSI 27" PRO MP275Q (2560x1440 WQHD 16:9 = 1.78) için sıkı geniş ekran filtresi:
-            // Yalnızca 1.45 (3:2) ile 2.10 arasındaki geniş yatay tablolar kabul edilir;
-            // kareye yakın (4:3, 5:4) veya dikey tablolar zorlanmaz ve gösterilmez.
-            return ratio >= 1.45 && ratio <= 2.10 && h >= 800;
-          }
+      final bytes = file.readAsBytesSync();
+      if (bytes.length < 24) return false;
+
+      // PNG IHDR desteği (manuel indirilen PNG dosyaları için)
+      if (bytes[0] == 0x89 &&
+          bytes[1] == 0x50 &&
+          bytes[2] == 0x4E &&
+          bytes[3] == 0x47) {
+        final w = (bytes[16] << 24) |
+            (bytes[17] << 16) |
+            (bytes[18] << 8) |
+            bytes[19];
+        final h = (bytes[20] << 24) |
+            (bytes[21] << 16) |
+            (bytes[22] << 8) |
+            bytes[23];
+        if (h > 0) {
+          final ratio = w / h;
+          return ratio >= 1.45 && ratio <= 2.15 && h >= 800;
         }
+        return false;
+      }
+
+      // JPEG SOI (0xFF 0xD8) kontrolü ve segment bazlı SOF0..SOF3 ayrıştırması
+      // (EXIF/APP1 içerisindeki küçük önizleme veya rastgele baytlara aldanmaz)
+      if (bytes[0] != 0xFF || bytes[1] != 0xD8) {
+        return true;
+      }
+
+      int i = 2;
+      while (i < bytes.length - 1) {
+        if (bytes[i] != 0xFF) {
+          i++;
+          continue;
+        }
+        // Ardışık 0xFF dolgu baytlarını atla
+        while (i < bytes.length && bytes[i] == 0xFF) {
+          i++;
+        }
+        if (i >= bytes.length) break;
+
+        final marker = bytes[i];
+        i++;
+
+        // EOI (0xD9) veya SOS (0xDA): sıkıştırılmış görüntü verisi başladı
+        if (marker == 0xD9 || marker == 0xDA) break;
+        // Uzunluk alanı olmayan tekil işaretçiler
+        if (marker == 0x00 ||
+            marker == 0x01 ||
+            (marker >= 0xD0 && marker <= 0xD8)) {
+          continue;
+        }
+
+        if (i + 1 >= bytes.length) break;
+        final segLen = (bytes[i] << 8) | bytes[i + 1];
+        if (segLen < 2) break;
+
+        // SOF0..SOF3 (0xC0..0xC3) gerçek görüntü boyutlarını içerir
+        if (marker >= 0xC0 && marker <= 0xC3) {
+          if (i + 6 < bytes.length) {
+            final h = (bytes[i + 3] << 8) | bytes[i + 4];
+            final w = (bytes[i + 5] << 8) | bytes[i + 6];
+            if (h > 0) {
+              final ratio = w / h;
+              // MSI 27" PRO MP275Q (2560x1440 WQHD 16:9 = 1.78) için sıkı geniş ekran filtresi:
+              // Yalnızca 1.45 (3:2) ile 2.15 arasındaki geniş yatay tablolar kabul edilir;
+              // kareye yakın (4:3, 5:4) veya dikey tablolar zorlanmaz ve gösterilmez.
+              return ratio >= 1.45 && ratio <= 2.15 && h >= 800;
+            }
+          }
+          break;
+        }
+
+        i += segLen;
       }
     } catch (_) {}
     return true;
@@ -521,13 +580,27 @@ class ArtworkRepository {
     return false;
   }
 
-  /// Loads all artworks: strictly landscape (aspect ratio >= 1.15) with valid files (> 50KB)
+  static String _humanizeFilename(String baseNameNoExt) {
+    final words = baseNameNoExt
+        .replaceAll(RegExp(r'[_-]+'), ' ')
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .map((w) => w[0].toUpperCase() + w.substring(1))
+        .toList();
+    return words.isEmpty ? 'Untitled Artwork' : words.join(' ');
+  }
+
+  /// Loads all artworks: strictly landscape (aspect ratio >= 1.45) with valid files (> 50KB),
+  /// including any manually downloaded paintings in the archive directory.
   Future<List<Artwork>> loadAllArtworks() async {
     await init();
 
     final artworks = <Artwork>[...bundledMasterpieces];
     final seenUrls = <String>{};
     final seenKeys = <String>{};
+    final seenFileNames = <String>{};
+    bool catalogUpdated = false;
 
     for (final b in bundledMasterpieces) {
       seenKeys.add('${slugify(b.artist)}_${slugify(b.title)}');
@@ -541,11 +614,13 @@ class ArtworkRepository {
           final art = Artwork.fromJson(item as Map<String, dynamic>);
           if (art.localFilePath != null) {
             final f = File(art.localFilePath!);
+            final fileName = p.basename(art.localFilePath!);
             final key = '${slugify(art.artist)}_${slugify(art.title)}';
             final url = art.remoteImageUrl;
 
             // Yinelenen (Duplicate) koruması
             if (seenKeys.contains(key) ||
+                seenFileNames.contains(fileName) ||
                 (url != null && seenUrls.contains(url)) ||
                 artworks.any((a) => a.id == art.id)) {
               continue;
@@ -562,10 +637,58 @@ class ArtworkRepository {
                 !hasFrameOrExcessiveBorders(f)) {
               artworks.add(art);
               seenKeys.add(key);
+              seenFileNames.add(fileName);
               if (url != null) seenUrls.add(url);
             }
           }
         }
+      } catch (_) {}
+    }
+
+    // Arşiv klasöründeki (manuel veya katalog dışı) tüm geçerli tabloları tara ve dahil et
+    if (await _paintingsDir.exists()) {
+      final entities = await _paintingsDir.list().toList();
+      entities.sort((a, b) => a.path.compareTo(b.path));
+      for (final entity in entities) {
+        if (entity is! File) continue;
+        final fileName = p.basename(entity.path);
+        final ext = p.extension(fileName).toLowerCase();
+        if (ext != '.jpg' && ext != '.jpeg' && ext != '.png') continue;
+        if (seenFileNames.contains(fileName)) continue;
+
+        final baseNoExt = p.basenameWithoutExtension(fileName);
+        if (isViolentOrInappropriate(baseNoExt)) continue;
+
+        final slug = slugify(baseNoExt);
+        if (slug.isEmpty) continue;
+        final id = 'local-$slug';
+        if (artworks.any((a) => a.id == id)) continue;
+
+        if (await entity.length() > 50000 &&
+            isLandscapeJpeg(entity) &&
+            !hasFrameOrExcessiveBorders(entity)) {
+          final art = Artwork(
+            id: id,
+            title: _humanizeFilename(baseNoExt),
+            artist: 'Archive Collection',
+            year: '',
+            medium: 'Oil on canvas',
+            museum: 'Local Archive',
+            localFilePath: entity.path,
+          );
+          artworks.add(art);
+          seenFileNames.add(fileName);
+          catalogUpdated = true;
+        }
+      }
+    }
+
+    if (catalogUpdated) {
+      try {
+        final catalogJson = jsonEncode(
+          artworks.where((a) => a.localFilePath != null).map((a) => a.toJson()).toList(),
+        );
+        await _catalogFile.writeAsString(catalogJson);
       } catch (_) {}
     }
 

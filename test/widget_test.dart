@@ -248,4 +248,43 @@ void main() {
       }
     }
   });
+
+  test('ArtworkRepository auto-registers uncataloged archive paintings into rotation', () async {
+    final tempDir = Directory.systemTemp.createTempSync('screensaver_manual_');
+    try {
+      final paintingsDir = Directory('${tempDir.path}/paintings')..createSync(recursive: true);
+      // 1600x900 PNG header (> 50KB padding)
+      final manualFile = File('${paintingsDir.path}/manual_test_painting.png');
+      final bytes = <int>[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+        0x00, 0x00, 0x00, 0x0D, // IHDR length
+        0x49, 0x48, 0x44, 0x52, // IHDR
+        0x00, 0x00, 0x06, 0x40, // width = 1600
+        0x00, 0x00, 0x03, 0x84, // height = 900
+        ...List.filled(55000, 0),
+      ];
+      manualFile.writeAsBytesSync(bytes);
+
+      final repo = ArtworkRepository(cacheDir: tempDir);
+      final controller = ScreensaverController(repository: repo);
+      await controller.initialize();
+
+      expect(
+        controller.artworks.any((a) => a.id == 'local-manual_test_painting'),
+        isTrue,
+      );
+
+      final visited = <String>{controller.currentArtwork.id};
+      for (int i = 0; i < controller.artworks.length - 1; i++) {
+        controller.nextArtwork();
+        visited.add(controller.currentArtwork.id);
+      }
+      expect(visited.contains('local-manual_test_painting'), isTrue);
+      expect(visited.length, controller.artworks.length);
+    } finally {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    }
+  });
 }

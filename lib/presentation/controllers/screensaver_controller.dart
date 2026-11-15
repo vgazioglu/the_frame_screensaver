@@ -21,7 +21,7 @@ class ScreensaverController extends ChangeNotifier {
 
   ScreensaverController({
     ArtworkRepository? repository,
-    this.maxHistoryCapacity = 100,
+    this.maxHistoryCapacity = 1000,
   }) : _repository = repository ?? ArtworkRepository();
 
   List<Artwork> get artworks => _artworks;
