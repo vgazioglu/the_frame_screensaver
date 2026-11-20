@@ -68,6 +68,25 @@ def is_cinnamon_screensaver_active() -> bool:
         return False
 
 
+def is_monitor_powered_off() -> bool:
+    """X11 DPMS üzerinden monitörün güç tasarrufu (Standby/Suspend/Off) modunda olup olmadığını denetler."""
+    try:
+        out = subprocess.check_output(
+            ["xset", "q"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=1,
+        )
+        lower = out.lower()
+        return (
+            "monitor is off" in lower
+            or "monitor is standby" in lower
+            or "monitor is suspend" in lower
+        )
+    except Exception:
+        return False
+
+
 def is_session_inhibited() -> bool:
     """Tarayıcı (Firefox, Chrome vb.) veya oynatıcıların masaüstü DBus Inhibit kilidini denetler."""
     for dest, path, iface in [
@@ -228,6 +247,15 @@ def main():
                 time.sleep(CHECK_INTERVAL_SECONDS)
                 continue
 
+            # Durum 1b: Monitör DPMS güç tasarrufu modunda (Standby / Suspend / Off)
+            if is_monitor_powered_off():
+                if is_screensaver_binary_running():
+                    print("[*] Monitör DPMS güç tasarrufu modunda. The Frame sonlandırılıyor...")
+                    sys.stdout.flush()
+                    kill_existing_screensavers()
+                time.sleep(CHECK_INTERVAL_SECONDS)
+                continue
+
             # Durum 2: Kullanıcı kilit ekranını şifre girip henüz açtı
             if was_cinnamon_active:
                 print("[+] Sistem kilit ekranı açıldı. Kullanıcı aktif, The Frame için bekleme süresi başlatıldı.")
@@ -296,6 +324,16 @@ def main():
                             except subprocess.TimeoutExpired:
                                 proc.kill()
                             was_cinnamon_active = True
+                            break
+                        # Eğer monitör DPMS güç tasarrufuyla kapandıysa:
+                        if is_monitor_powered_off():
+                            print("[*] Monitör güç tasarrufu (DPMS) moduna geçti. The Frame kaynak tüketmemesi için sonlandırılıyor...")
+                            sys.stdout.flush()
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=2)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
                             break
                         time.sleep(1)
 
