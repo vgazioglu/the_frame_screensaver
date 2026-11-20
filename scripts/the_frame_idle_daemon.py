@@ -87,6 +87,22 @@ def is_monitor_powered_off() -> bool:
         return False
 
 
+def lock_system_screen() -> None:
+    """Sistemin orijinal kilit ekranını (Cinnamon / loginctl) devreye sokar."""
+    if is_cinnamon_screensaver_active():
+        return
+    for cmd in (
+        ["cinnamon-screensaver-command", "--lock"],
+        ["loginctl", "lock-session"],
+        ["xdg-screensaver", "lock"],
+    ):
+        try:
+            subprocess.run(cmd, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=2, check=True)
+            return
+        except Exception:
+            continue
+
+
 def is_session_inhibited() -> bool:
     """Tarayıcı (Firefox, Chrome vb.) veya oynatıcıların masaüstü DBus Inhibit kilidini denetler."""
     for dest, path, iface in [
@@ -250,9 +266,11 @@ def main():
             # Durum 1b: Monitör DPMS güç tasarrufu modunda (Standby / Suspend / Off)
             if is_monitor_powered_off():
                 if is_screensaver_binary_running():
-                    print("[*] Monitör DPMS güç tasarrufu modunda. The Frame sonlandırılıyor...")
+                    print("[*] Monitör DPMS güç tasarrufu modunda. Sistem kilitleniyor ve The Frame sonlandırılıyor...")
                     sys.stdout.flush()
+                    lock_system_screen()
                     kill_existing_screensavers()
+                    was_cinnamon_active = True
                 time.sleep(CHECK_INTERVAL_SECONDS)
                 continue
 
@@ -327,13 +345,15 @@ def main():
                             break
                         # Eğer monitör DPMS güç tasarrufuyla kapandıysa:
                         if is_monitor_powered_off():
-                            print("[*] Monitör güç tasarrufu (DPMS) moduna geçti. The Frame kaynak tüketmemesi için sonlandırılıyor...")
+                            print("[*] Monitör güç tasarrufu (DPMS) moduna geçti. Sistem kilitleniyor ve The Frame sonlandırılıyor...")
                             sys.stdout.flush()
+                            lock_system_screen()
                             proc.terminate()
                             try:
                                 proc.wait(timeout=2)
                             except subprocess.TimeoutExpired:
                                 proc.kill()
+                            was_cinnamon_active = True
                             break
                         time.sleep(1)
 
