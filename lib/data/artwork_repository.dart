@@ -24,6 +24,7 @@ class ArtworkRepository {
   late File _shownHistoryFile;
 
   bool _initialized = false;
+  Future<void> _historyWriteQueue = Future<void>.value();
 
   ArtworkRepository({
     Directory? cacheDir,
@@ -310,16 +311,21 @@ class ArtworkRepository {
     return [];
   }
 
-  /// Gösterilen tablo kimliklerini diske kaydeder
-  Future<void> saveShownHistory(List<String> history) async {
-    await init();
-    try {
-      if (!await _cacheDir.exists()) {
-        await _cacheDir.create(recursive: true);
-      }
-      final jsonStr = jsonEncode(history);
-      await _shownHistoryFile.writeAsString(jsonStr, flush: true);
-    } catch (_) {}
+  /// Gösterilen tablo kimliklerini diske atomik ve sıralı olarak kaydeder
+  Future<void> saveShownHistory(List<String> history) {
+    final snapshot = List<String>.from(history);
+    _historyWriteQueue = _historyWriteQueue.then((_) async {
+      await init();
+      try {
+        if (!await _cacheDir.exists()) {
+          await _cacheDir.create(recursive: true);
+        }
+        final tmpFile = File('${_shownHistoryFile.path}.tmp');
+        await tmpFile.writeAsString(jsonEncode(snapshot), flush: true);
+        await tmpFile.rename(_shownHistoryFile.path);
+      } catch (_) {}
+    });
+    return _historyWriteQueue;
   }
 
   /// Gösterim geçmişi dosyasını temizler / sıfırlar

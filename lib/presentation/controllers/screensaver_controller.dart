@@ -53,9 +53,9 @@ class ScreensaverController extends ChangeNotifier {
       _shownArtworkIds.clear();
       _shownArtworkIds.addAll(savedHistory);
 
-      // Kapasite sınırını aştıysa sıfırla
-      if (_shownArtworkIds.length >= maxHistoryCapacity) {
-        _shownArtworkIds.clear();
+      // Kapasite sınırını aştıysa en eski kayıtları FIFO ile çıkar (tüm geçmişi silme)
+      while (_shownArtworkIds.length > maxHistoryCapacity) {
+        _shownArtworkIds.remove(_shownArtworkIds.first);
       }
     } catch (_) {
       _artworks = [...ArtworkRepository.bundledMasterpieces];
@@ -67,9 +67,21 @@ class ScreensaverController extends ChangeNotifier {
         var unvisited =
             _artworks.where((a) => !_shownArtworkIds.contains(a.id)).toList();
         if (unvisited.isEmpty) {
-          // Tüm eserler daha önce gösterilmiş, döngüyü sıfırla
+          // Tüm eserler daha önce gösterilmiş; döngüyü sıfırla ama bir önceki oturumda
+          // en son gösterilen eseri hariç tutarak peş peşe tekrarı önle.
+          final lastShownId =
+              _shownArtworkIds.isNotEmpty ? _shownArtworkIds.last : null;
           _shownArtworkIds.clear();
-          unvisited = _artworks;
+          if (_artworks.length > 1 &&
+              lastShownId != null &&
+              _artworks.any((a) => a.id == lastShownId)) {
+            _shownArtworkIds.add(lastShownId);
+          }
+          unvisited =
+              _artworks.where((a) => !_shownArtworkIds.contains(a.id)).toList();
+          if (unvisited.isEmpty) {
+            unvisited = _artworks;
+          }
         }
 
         final initialArt = unvisited[Random().nextInt(unvisited.length)];
@@ -86,10 +98,10 @@ class ScreensaverController extends ChangeNotifier {
   }
 
   Future<void> _recordArtworkShown(String id) async {
+    _shownArtworkIds.remove(id);
     _shownArtworkIds.add(id);
-    if (_shownArtworkIds.length >= maxHistoryCapacity) {
-      _shownArtworkIds.clear();
-      _shownArtworkIds.add(id);
+    while (_shownArtworkIds.length > maxHistoryCapacity && maxHistoryCapacity > 0) {
+      _shownArtworkIds.remove(_shownArtworkIds.first);
     }
     await _repository.saveShownHistory(_shownArtworkIds.toList());
   }

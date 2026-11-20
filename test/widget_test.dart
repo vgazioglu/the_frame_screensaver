@@ -287,4 +287,72 @@ void main() {
       }
     }
   });
+
+  test('ScreensaverController.initialize does not repeat the last shown artwork when starting a new cycle', () async {
+    final tempDir = Directory.systemTemp.createTempSync('screensaver_wrap_');
+    try {
+      final repo = ArtworkRepository(cacheDir: tempDir);
+      final allIds = ArtworkRepository.bundledMasterpieces.map((a) => a.id).toList();
+      expect(allIds.length, greaterThanOrEqualTo(2));
+
+      // Tüm eserler daha önce gösterilmiş; en son gösterilen allIds.last
+      await repo.saveShownHistory(allIds);
+
+      for (int run = 0; run < 10; run++) {
+        await repo.saveShownHistory(allIds);
+        final controller = ScreensaverController(repository: repo);
+        await controller.initialize();
+        expect(controller.currentArtwork.id, isNot(allIds.last));
+      }
+    } finally {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    }
+  });
+
+  test('ScreensaverController evicts oldest history via FIFO instead of wiping all history', () async {
+    final tempDir = Directory.systemTemp.createTempSync('screensaver_fifo_');
+    try {
+      final repo = ArtworkRepository(cacheDir: tempDir);
+      await repo.saveShownHistory(['old-1', 'old-2', 'recent-3']);
+
+      final controller = ScreensaverController(
+        repository: repo,
+        maxHistoryCapacity: 3,
+      );
+      await controller.initialize();
+
+      // Kapasite 3: en eski 'old-1' çıkarılmalı, 'old-2', 'recent-3' ve yeni gösterilen kalmalı
+      expect(controller.shownArtworkIds.length, 3);
+      expect(controller.shownArtworkIds.contains('old-1'), isFalse);
+      expect(controller.shownArtworkIds.contains('old-2'), isTrue);
+      expect(controller.shownArtworkIds.contains('recent-3'), isTrue);
+      expect(controller.shownArtworkIds.contains(controller.currentArtwork.id), isTrue);
+    } finally {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    }
+  });
+
+  test('ArtworkRepository.saveShownHistory handles rapid concurrent writes without corruption', () async {
+    final tempDir = Directory.systemTemp.createTempSync('screensaver_conc_');
+    try {
+      final repo = ArtworkRepository(cacheDir: tempDir);
+      await Future.wait([
+        repo.saveShownHistory(['a']),
+        repo.saveShownHistory(['a', 'b']),
+        repo.saveShownHistory(['a', 'b', 'c']),
+        repo.saveShownHistory(['a', 'b', 'c', 'd']),
+      ]);
+
+      final loaded = await repo.loadShownHistory();
+      expect(loaded, ['a', 'b', 'c', 'd']);
+    } finally {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    }
+  });
 }
